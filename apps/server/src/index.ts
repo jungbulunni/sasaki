@@ -62,6 +62,8 @@ export function startServer(port = Number(process.env.PORT) || 3000) {
       attach(r, String(p?.nickname ?? ''), p?.token, ack);
     });
     socket.on('setEggs', (n: number) => room?.setEggs(seat, Number(n)));
+    socket.on('addAi', (_: unknown, ack?: (x: unknown) => void) => { const err = room?.addAi(seat); ack?.({ ok: !err, reason: err }); });
+    socket.on('removeAi', (target: number) => room?.removeAi(seat, Number(target)));
     socket.on('start', (_: unknown, ack?: (x: unknown) => void) => { const err = room?.start(seat); ack?.({ ok: !err, reason: err }); });
     socket.on('action', (a: { type: string; cards?: string[]; id?: string }) => room?.submit(seat, a));
     socket.on('select', (cards: string[]) => room?.select(seat, cards));

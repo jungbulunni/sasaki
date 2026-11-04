@@ -67,6 +67,29 @@ async function openRoom(eggs: number) {
   return { code: c.code as string, sockets, joins };
 }
 
+describe('사람 2명 + AI 2명', () => {
+  it('두 사람이 접속해 AI 둘과 게임을 끝까지 진행, 유출 없음', async () => {
+    const sockets = [0, 1].map(() => connect(url(), { transports: ['websocket'], forceNew: true }));
+    await Promise.all(sockets.map((s) => new Promise((r) => s.on('connect', r))));
+    const c: any = await ask(sockets[0], 'create', { nickname: '방장' });
+    const j: any = await ask(sockets[1], 'join', { code: c.code, nickname: '친구' });
+    const a1: any = await ask(sockets[0], 'addAi', null);
+    const a2: any = await ask(sockets[0], 'addAi', null);
+    expect([a1.ok, a2.ok]).toEqual([true, true]);
+    sockets[0].emit('setEggs', 4);
+    await new Promise((r) => setTimeout(r, 30));
+    const bots = [bot(sockets[0], c.seat, c.token), bot(sockets[1], j.seat, j.token)];
+    const started: any = await ask(sockets[0], 'start', null);
+    expect(started.ok).toBe(true);
+    const deadline = Date.now() + 150_000;
+    while (Date.now() < deadline && !bots[0].last?.result?.ended) await new Promise((r) => setTimeout(r, 200));
+    expect(bots[0].last.result.ended).toBe(true);
+    for (const b of bots) expect(b.leaks).toEqual([]);
+    console.log(`  사람2+AI2 방 ${c.code}: ${bots[0].last.game.handNo}판, AI 이름 ${bots[0].last.seats.filter((x: any) => x.ai).map((x: any) => x.nickname).join(', ')}`);
+    sockets.forEach((s) => s.close());
+  }, 160_000);
+});
+
 describe('4인 실시간 접속', () => {
   it('네 명이 각자 접속해 게임을 끝까지 진행, 주패 유출 없음', async () => {
     const { code, sockets, joins } = await openRoom(8);

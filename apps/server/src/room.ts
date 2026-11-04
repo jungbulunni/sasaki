@@ -3,7 +3,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  applyHandBatch, AUTO_PASS_MS, CardId, classifyCombo, createMatch, finalStandings, finishHand, HandAction,
+  aiDecide, aiDelay, aiView, AI_NAMES, applyHandBatch, AUTO_PASS_MS, CardId, classifyCombo, createMatch, finalStandings, finishHand, HandAction,
   HandEvent, HandOutcome, HandState, hasNoPlay, MatchState, Play, seededRng, sortHand, specialOptions, startHand,
   teamOf, timeoutAction, Rng,
 } from '../../../packages/game-core/src/index';
@@ -32,6 +32,8 @@ interface SeatInfo {
   connected: boolean;
   selection: CardId[];
   recentActionIds: string[];
+  /** 처음부터 AI인 자리 */
+  ai: boolean;
 }
 
 export type PublicEvent = Exclude<HandEvent, { type: 'returned' } | { type: 'trickCleared' }>
@@ -73,6 +75,7 @@ export class Room {
   private queue: { seat: number; action: HandAction }[] = [];
   private flushScheduled = false;
   private rng: Rng;
+  private aiTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
   constructor(public code: string, private cb: RoomCallbacks, seed = randomBytes(4).readUInt32LE()) {
     this.rng = seededRng(seed);
@@ -90,6 +93,7 @@ export class Room {
         seat.connected = true;
         if (wasAway && this.status === 'playing') this.pushLog({ type: 'back', seat: s });
         this.resumeIfPaused();
+        this.scheduleAi(); // 복귀 즉시 조작권은 사람에게: 대기 중이던 AI 행동 취소
         this.broadcast();
         return { ok: true, seat: s, token };
       }
@@ -101,8 +105,8 @@ export class Room {
     const free = this.seats.findIndex((x) => x === null);
     if (free < 0) return { ok: false, reason: '방이 가득 찼어요 (4명)' };
     const t = randomBytes(16).toString('hex');
-    this.seats[free] = { nickname: name, tokenHash: hash(t), connected: true, selection: [], recentActionIds: [] };
-    if (this.seats.filter(Boolean).length === 1) this.host = free;
+    this.seats[free] = { nickname: name, tokenHash: hash(t), connected: true, selection: [], recentActionIds: [], ai: false };
+    if (this.humans().length === 1) this.host = free;
     this.clearExpiry();
     this.broadcast();
     return { ok: true, seat: free, token: t };
@@ -113,12 +117,13 @@ export class Room {
     if (!s) return;
     if (this.status === 'lobby') {
       this.seats[seat] = null;
-      if (this.host === seat) this.host = Math.max(0, this.seats.findIndex(Boolean));
+      if (this.host === seat) this.host = this.humans()[0] ?? 0;
     } else {
       s.connected = false;
       if (this.status === 'playing') this.pushLog({ type: 'left', seat });
     }
-    if (!this.seats.some((x) => x?.connected)) this.pauseAll();
+    if (!this.seats.some((x) => x?.connected && !x.ai)) this.pauseAll();
+    else this.scheduleAi(); // 나간 사람 자리는 AI가 대신
     this.broadcast();
   }
 
@@ -128,6 +133,7 @@ export class Room {
       this.pausedAt = Date.now();
       if (this.timer) clearTimeout(this.timer);
       this.timer = null;
+      this.clearAiTimers();
     }
     this.clearExpiry();
     this.expiry = setTimeout(() => this.cb.onExpire(), TIMES.emptyRoom);
@@ -142,6 +148,7 @@ export class Room {
     if (this.reveal) this.reveal.until += shift;
     if (this.nextAt) this.nextAt += shift;
     this.arm();
+    this.scheduleAi();
   }
 
   private clearExpiry() {
@@ -150,11 +157,63 @@ export class Room {
   }
 
   destroy() {
+    this.clearAiTimers();
     if (this.timer) clearTimeout(this.timer);
     this.clearExpiry();
   }
 
   // ───────── 시작 ─────────
+
+  private humans() {
+    return [0, 1, 2, 3].filter((i) => this.seats[i] && !this.seats[i]!.ai);
+  }
+
+  /** 대기실: 빈 자리에 AI 넣기 (방장만) */
+  addAi(seat: number): string | null {
+    if (seat !== this.host || this.status !== 'lobby') return '방장만 AI를 넣을 수 있어요';
+    const free = this.seats.findIndex((x) => x === null);
+    if (free < 0) return '빈 자리가 없어요';
+    const used = new Set(this.seats.map((x) => x?.nickname));
+    const names = AI_NAMES.filter((n) => !used.has(n));
+    const name = names[Math.floor(this.rng() * names.length)] ?? `AI${free + 1}`;
+    this.seats[free] = { nickname: name, tokenHash: '', connected: true, selection: [], recentActionIds: [], ai: true };
+    this.broadcast();
+    return null;
+  }
+
+  removeAi(seat: number, target: number) {
+    if (seat !== this.host || this.status !== 'lobby' || !this.seats[target]?.ai) return;
+    this.seats[target] = null;
+    this.broadcast();
+  }
+
+  /** AI가 조작하는 자리: AI 자리 또는 게임 중 접속이 끊긴 사람 자리 */
+  private controlled(i: number) {
+    const s = this.seats[i];
+    return !!s && (s.ai || (this.status === 'playing' && !s.connected));
+  }
+
+  private clearAiTimers() {
+    for (const t of this.aiTimers.values()) clearTimeout(t);
+    this.aiTimers.clear();
+  }
+
+  /** 상태가 바뀔 때마다 AI 자리의 다음 행동을 사람 같은 반응 시간 뒤로 예약 */
+  private scheduleAi() {
+    this.clearAiTimers();
+    if (!this.hand || this.reveal || this.outcome || this.pausedAt !== null || this.status !== 'playing') return;
+    const rev = this.handRev;
+    for (let i = 0; i < 4; i++) {
+      if (!this.controlled(i)) continue;
+      const a = aiDecide(aiView(this.hand, i), this.rng);
+      if (!a) continue;
+      this.aiTimers.set(i, setTimeout(() => {
+        this.aiTimers.delete(i);
+        if (this.handRev !== rev || !this.controlled(i)) return; // 그 사이 상황이 바뀌었으면 취소
+        this.submit(i, a as { type: string; cards?: CardId[] });
+      }, aiDelay(a, this.rng)));
+    }
+  }
 
   /** 게임이 끝난 뒤 같은 사람들로 대기실로 돌아가기 */
   rematch(seat: number) {
@@ -163,7 +222,7 @@ export class Room {
     this.match = null; this.hand = null; this.lastHand = null; this.outcome = null;
     this.reveal = null; this.deadline = null; this.nextAt = 0; this.log = [];
     this.seats = this.seats.map((x) => (x && x.connected ? x : null));
-    if (!this.seats[this.host]) this.host = Math.max(0, this.seats.findIndex(Boolean));
+    if (!this.seats[this.host] || this.seats[this.host]!.ai) this.host = this.humans()[0] ?? 0;
     this.broadcast();
   }
 
@@ -226,7 +285,7 @@ export class Room {
   readyNext(seat: number) {
     if (!this.outcome || this.reveal || this.match?.status !== 'playing') return;
     this.ready.add(seat);
-    const humans = [0, 1, 2, 3].filter((i) => this.seats[i]?.connected);
+    const humans = [0, 1, 2, 3].filter((i) => this.seats[i]?.connected && !this.seats[i]!.ai);
     if (humans.every((i) => this.ready.has(i))) this.nextAt = Math.min(this.nextAt, Date.now() + TIMES.countdown);
     this.arm();
     this.broadcast();
@@ -292,6 +351,7 @@ export class Room {
   private changed() {
     this.handRev++;
     this.arm();
+    this.scheduleAi();
     this.broadcast();
   }
 
@@ -339,7 +399,7 @@ export class Room {
   // ───────── 화면 정보 (플레이어별) ─────────
 
   broadcast() {
-    this.seats.forEach((s, i) => { if (s?.connected) this.cb.emit(i, 'view', this.view(i)); });
+    this.seats.forEach((s, i) => { if (s?.connected && !s.ai) this.cb.emit(i, 'view', this.view(i)); });
   }
 
   view(me: number) {
@@ -347,7 +407,7 @@ export class Room {
     const m = this.match;
     const now = Date.now();
     const seats = this.seats.map((s, i) => {
-      const base = { nickname: s?.nickname ?? null, connected: !!s?.connected };
+      const base = { nickname: s?.nickname ?? null, connected: !!s?.connected, ai: !!s?.ai };
       if (!h || !m) return base;
       const revealed = h.revealedFire.includes(i);
       return {

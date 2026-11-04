@@ -9,7 +9,7 @@ interface Sock {
 }
 
 // ───── 서버가 보내는 화면 정보 (room.ts view()) ─────
-interface SeatV { nickname: string | null; connected: boolean; eggs?: number; cardCount?: number; rank?: number | null; fire?: 'fire' | 'pig' | null; runner?: boolean; ddooker?: boolean; passed?: boolean }
+interface SeatV { nickname: string | null; connected: boolean; ai?: boolean; eggs?: number; cardCount?: number; rank?: number | null; fire?: 'fire' | 'pig' | null; runner?: boolean; ddooker?: boolean; passed?: boolean }
 interface PlayV { seat: number; cards: CardId[]; kind: string; via: string }
 interface DeadlineV { kind: string; at: number; total: number; seat: number | null }
 interface GameV { handNo: number; multiplier: number; buried: number; careSeat: number | null; phase: string; activeSeat: number | null; leaderSeat: number; runnerSeat: number | null; trick: PlayV[]; revealLeader: number | null; deadline: DeadlineV | null }
@@ -101,7 +101,7 @@ function logText(ev: any, v: View | null = view): string | null {
     case 'ddook': return `${n(ev.seat)} 뚝! 배수 ×4`;
     case 'trickCleared': return `${n(ev.leader)} 선`;
     case 'handOver': return ev.early ? '결과가 정해져 판 종료' : '판 종료';
-    case 'left': return `${n(ev.seat)} 연결 끊김`;
+    case 'left': return `${n(ev.seat)} 연결 끊김 · AI가 대신 플레이`;
     case 'back': return `${n(ev.seat)} 돌아옴`;
   }
   return null;
@@ -247,12 +247,16 @@ function lobbyHtml(v: View) {
   const link = `${location.origin}${location.pathname}?room=${v.code}`;
   const full = v.seats.every((s) => s.nickname);
   const isHost = v.host === v.me;
-  const seats = v.seats.map((s, i) => `<li class="lseat${s.nickname ? '' : ' empty'}"><span class="lnum">${i + 1}</span>${s.nickname ? esc(s.nickname) : '빈 자리'}${i === v.host && s.nickname ? ' <i class="chip">방장</i>' : ''}${i === v.me ? ' <i class="chip turn">나</i>' : ''}</li>`).join('');
+  const seats = v.seats.map((s, i) => {
+    const tools = isHost && !s.nickname ? `<button type="button" class="btn small ai-add" data-addai="1">AI 넣기</button>`
+      : isHost && s.ai ? `<button type="button" class="btn ghost small" data-removeai="${i}">빼기</button>` : '';
+    return `<li class="lseat${s.nickname ? '' : ' empty'}"><span class="lnum">${i + 1}</span><span class="lname">${s.nickname ? esc(s.nickname) : '빈 자리'}</span>${s.ai ? ' <i class="chip aichip">AI</i>' : ''}${i === v.host && s.nickname ? ' <i class="chip">방장</i>' : ''}${i === v.me ? ' <i class="chip turn">나</i>' : ''}${tools}</li>`;
+  }).join('');
   return `<main class="home"><div class="home-card wide">
     <p class="eyebrow">대기실</p>
     <h2>방 코드 <span class="code">${v.code}</span></h2>
     <div class="invite"><input id="linkIn" readonly value="${esc(link)}" aria-label="초대 링크"><button type="button" class="btn" id="copyBtn">링크 복사</button></div>
-    <p class="psub">이 링크를 친구 세 명에게 보내세요. 4명이 모이면 방장이 시작합니다.</p>
+    <p class="psub">이 링크를 친구들에게 보내세요. 빈 자리는 방장이 AI로 채울 수 있어요. 4자리가 차면 시작합니다.</p>
     <ol class="lseats">${seats}</ol>
     ${isHost
       ? `<div class="prow left"><label class="field inline"><span>시작 알</span><input id="eggsIn" type="number" min="1" max="999" value="${v.startEggs}"></label>
@@ -265,7 +269,8 @@ function seatBadges(v: View, i: number) {
   const s = v.seats[i];
   const g = v.game!;
   const b: string[] = [];
-  if (!s.connected) b.push('<i class="chip warn">연결 끊김</i>');
+  if (s.ai) b.push('<i class="chip aichip">AI</i>');
+  else if (!s.connected) b.push('<i class="chip warn">연결 끊김 · AI 대리</i>');
   if (g.activeSeat === i) b.push('<i class="chip turn">차례</i>');
   if (s.rank) b.push(`<i class="chip done">${s.rank}등</i>`);
   else if (s.cardCount === 0 && g.phase !== 'hand-over') b.push('<i class="chip">카드를 다 냄</i>');
@@ -469,6 +474,10 @@ app.addEventListener('click', (e) => {
     render();
     return;
   }
+  const addAi = t.closest<HTMLElement>('[data-addai]');
+  if (addAi) { socket.emit('addAi', null, (r: any) => { if (!r?.ok && r?.reason) toast(r.reason); }); return; }
+  const rmAi = t.closest<HTMLElement>('[data-removeai]');
+  if (rmAi) { socket.emit('removeAi', Number(rmAi.dataset.removeai)); return; }
   const act = t.closest<HTMLElement>('[data-act]');
   if (act) {
     const cards = act.dataset.cards ? act.dataset.cards.split(',') : undefined;

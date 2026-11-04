@@ -289,3 +289,80 @@ describe('판 결과와 다음 판', () => {
 });
 
 void classifyCombo;
+
+describe('AI 자리', () => {
+  function aiRoom() {
+    const views: number[] = [0, 0, 0, 0];
+    const room = new Room('AIRM', { emit: (seat, ev) => { if (ev === 'view') views[seat]++; }, onExpire: () => {} }, 5);
+    const a = room.join('가선') as { ok: true; seat: number; token: string };
+    const b = room.join('친구') as { ok: true; seat: number; token: string };
+    return { room, views, tokens: [a.token, b.token] };
+  }
+
+  it('방장만 빈 자리에 AI를 넣고 뺄 수 있고, 2명 + AI 2명으로 시작', () => {
+    const { room } = aiRoom();
+    expect(room.addAi(1)).toBe('방장만 AI를 넣을 수 있어요');
+    expect(room.addAi(0)).toBeNull();
+    expect(room.addAi(0)).toBeNull();
+    expect(room.addAi(0)).toBe('빈 자리가 없어요');
+    room.removeAi(0, 3);
+    expect(room.seats[3]).toBeNull();
+    room.addAi(0);
+    expect(room.seats.filter((s) => s?.ai)).toHaveLength(2);
+    expect(room.start(0)).toBeNull();
+  });
+
+  it('AI에게는 화면 정보를 보내지 않는다', () => {
+    const { room, views } = aiRoom();
+    room.addAi(0); room.addAi(0);
+    room.start(0);
+    vi.advanceTimersByTime(20_000);
+    expect(views[2] + views[3]).toBe(0);
+    expect(views[0]).toBeGreaterThan(0);
+  });
+
+  it('AI는 사람처럼 1~4초 안에 자기 차례 카드를 낸다 (8초 시간 초과 전)', () => {
+    const { room } = aiRoom();
+    room.addAi(0); room.addAi(0);
+    room.start(0);
+    rig(room, [['S5', 'S9', 'H10'], ['S6', 'S12', 'D10'], ['S3', 'S8', 'S4'], ['S7', 'C3']], 2);
+    vi.advanceTimersByTime(1000);
+    expect(room.hand!.trick).toHaveLength(0); // 바로 내지 않음
+    vi.advanceTimersByTime(3000);
+    expect(room.hand!.trick).toHaveLength(1);
+    expect(room.hand!.trick[0].seat).toBe(2);
+  });
+
+  it('접속이 끊긴 사람 자리는 AI가 대신 플레이', () => {
+    const { room } = aiRoom();
+    room.addAi(0); room.addAi(0);
+    room.start(0);
+    rig(room, [['S5', 'S9', 'H10'], ['S6', 'S12', 'D10'], ['S3', 'S8'], ['S7', 'C3']], 1);
+    room.disconnect(1);
+    vi.advanceTimersByTime(4000);
+    expect(room.hand!.trick[0]?.seat).toBe(1);
+  });
+
+  it('돌아오면 대기 중이던 AI 행동은 취소되고 조작권은 사람에게', () => {
+    const { room, tokens } = aiRoom();
+    room.addAi(0); room.addAi(0);
+    room.start(0);
+    rig(room, [['S5', 'S9', 'H10'], ['S6', 'S12', 'D10'], ['S3', 'S8'], ['S7', 'C3']], 1);
+    room.disconnect(1);
+    vi.advanceTimersByTime(500);
+    room.join('', tokens[1]);
+    vi.advanceTimersByTime(4500);
+    expect(room.hand!.trick).toHaveLength(0); // AI가 내지 않았고, 사람 8초는 아직 남음
+    vi.advanceTimersByTime(4000);
+    expect(room.hand!.trick[0]?.seat).toBe(1); // 8초 시간 초과 자동 제출
+  });
+
+  it('사람 2명이 가만히 있어도 AI와 함께 여러 판이 진행된다', () => {
+    const { room } = aiRoom();
+    room.addAi(0); room.addAi(0);
+    room.setEggs(0, 30);
+    room.start(0);
+    for (let i = 0; i < 2000 && room.match!.handNo < 3 && room.status === 'playing'; i++) vi.advanceTimersByTime(1000);
+    expect(room.match!.handNo >= 3 || room.status === 'ended').toBe(true);
+  });
+});

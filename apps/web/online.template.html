@@ -202,6 +202,8 @@ td.num, th:nth-child(4), th:nth-child(5) { text-align: right; }
 .lseat { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--r); background: rgba(0,0,0,.2); border: 1px solid var(--line); font-weight: 500; min-width: 0; }
 .lseat.empty { color: var(--muted); border-style: dashed; font-weight: 400; }
 .lnum { font-family: var(--font-num); color: var(--muted); font-size: 12px; }
+.lname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip.aichip { background: #3d5f8a; color: #fff; }
 .prow.left { justify-content: flex-start; align-items: end; }
 .field.inline input { width: 6em; }
 .ring { flex: none; vertical-align: middle; transform: rotate(-90deg); }
