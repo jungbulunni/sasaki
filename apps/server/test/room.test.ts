@@ -398,3 +398,15 @@ describe('자리 바꾸기', () => {
     expect(room.shufflePending).toBe(false);
   });
 });
+
+describe('AI 숨김', () => {
+  it('대기실에서는 AI 표시, 게임 중에는 누가 AI인지 보내지 않는다', () => {
+    const room = new Room('HIDE', { emit: () => {}, onExpire: () => {} }, 2);
+    room.join('가선'); room.join('친구');
+    room.addAi(0); room.addAi(0);
+    expect((room.view(0).seats as any[]).filter((s) => s.ai)).toHaveLength(2);
+    room.start(0);
+    const json = JSON.stringify(room.view(0).seats);
+    expect(json.includes('"ai"')).toBe(false);
+  });
+});

@@ -457,7 +457,8 @@ export class Room {
     const m = this.match;
     const now = Date.now();
     const seats = this.seats.map((s, i) => {
-      const base = { nickname: s?.nickname ?? null, connected: !!s?.connected, ai: !!s?.ai };
+      // 누가 AI인지는 대기실에서만 알려준다 (게임 중에는 사람과 구분되지 않게)
+      const base = { nickname: s?.nickname ?? null, connected: !!s?.connected, ai: this.status === 'lobby' ? !!s?.ai : undefined };
       if (!h || !m) return base;
       const revealed = h.revealedFire.includes(i);
       return {

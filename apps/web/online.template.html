@@ -178,13 +178,54 @@ td.num, th:nth-child(4), th:nth-child(5) { text-align: right; }
   .layout { grid-template-columns: minmax(0, 1fr); }
   .log { position: static; max-height: 260px; }
 }
-@media (max-width: 520px) {
-  .felt { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "left right" "top top" "pile pile" "bottom bottom"; padding: 10px; }
-  .seat.left, .seat.right { align-self: stretch; }
-  .pile { min-height: 150px; }
+/* 세로 휴대폰: 자리 배치는 컴퓨터와 똑같이 위·왼쪽·오른쪽·아래를 유지하고 크기만 줄인다 */
+@media (max-width: 600px) {
+  .felt { grid-template-columns: minmax(0, 1fr) minmax(0, 1.55fr) minmax(0, 1fr); grid-template-areas: ". top ." "left pile right" ". bottom ."; padding: 8px; gap: 6px; border-radius: 14px; }
+  .seat { padding: 6px 4px; gap: 3px; }
+  .seat .backs { display: none; }
+  .sname { font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seggs { font-size: 11px; }
+  .chip { font-size: 10px; padding: 3px 5px; }
+  .pile { min-height: 150px; padding: 4px; }
+  .pile .card { --w: 27px; } .pile .play.last .card { --w: 33px; }
+  .pile .card .rk { font-size: 11px; } .pile .card .st { font-size: 12px; }
+  .pile .play.last .card .rk { font-size: 13px; } .pile .play.last .card .st { font-size: 14px; }
+  .pby { font-size: 11px; }
+  .lead-note { font-size: 18px; }
+  .ptitle { font-size: 20px; }
   .hand .card { --w: 40px; } .card .rk { font-size: 15px; } .card .st { font-size: 17px; }
   .logo { font-size: 26px; } .sub { display: none; }
+  .me { padding: 10px; }
 }
+/* 가로 휴대폰(화면 높이가 낮을 때): 게임판과 내 주패를 나란히 */
+@media (orientation: landscape) and (max-height: 520px) {
+  #app { padding-block: 6px 10px; gap: 8px; }
+  .top { gap: 6px; } .logo { font-size: 22px; } .sub { display: none; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .tablearea { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; gap: 10px; }
+  .felt { padding: 6px; gap: 5px; }
+  .seat { padding: 4px; gap: 2px; } .seat .backs { display: none; }
+  .pile { min-height: 120px; padding: 4px; }
+  .pile .card { --w: 28px; } .pile .play.last .card { --w: 34px; }
+  .hand { padding-top: 10px; min-height: 0; }
+  .hand .card { --w: 38px; }
+  .log { max-height: 160px; }
+}
+/* 자리 상자: 내용 가운데 정렬, 위·아래 자리는 너무 넓어지지 않게 */
+.seat { justify-items: center; text-align: center; }
+.seat > * { justify-self: center; }
+.sname { display: inline-flex; align-items: center; justify-content: center; gap: 2px; }
+.seat.top, .seat.bottom { justify-self: center; width: min(100%, 280px); }
+/* 차례 방향(반시계) 표시와 지금 차례인 자리 강조 */
+.pile { position: relative; }
+.pile::before { content: "↺"; position: absolute; inset: 0; display: grid; place-items: center; font-size: clamp(70px, 14vw, 130px); color: var(--ink); opacity: .06; pointer-events: none; }
+.seat.active { border-color: var(--egg); box-shadow: 0 0 0 2px var(--egg), 0 0 18px rgba(226,180,76,.35); }
+details.log > summary { cursor: pointer; list-style: none; }
+details.log > summary::-webkit-details-marker { display: none; }
+details.log > summary .eyebrow { margin: 0; }
+details.log[open] > summary .eyebrow { margin-bottom: 8px; }
+details.log > summary .eyebrow::after { content: " ▾"; }
+details.log:not([open]) > summary .eyebrow::after { content: " ▸"; }
 
 /* ── 온라인 전용 ── */
 .home { min-height: 70vh; display: grid; place-items: center; }

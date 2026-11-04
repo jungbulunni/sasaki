@@ -28,6 +28,9 @@ let lastLogN = -1;
 let toastMsg = '';
 let toastTimer = 0;
 let joining = false;
+// 진행 기록: 넓은 화면은 펼치고, 휴대폰은 접어 둠 (사용자가 바꾸면 그대로 유지)
+let logOpen = window.matchMedia('(min-width: 861px)').matches;
+document.addEventListener('toggle', (e) => { if ((e.target as HTMLElement).id === 'logBox') logOpen = (e.target as HTMLDetailsElement).open; }, true);
 const params = new URLSearchParams(location.search);
 let roomCode = (params.get('room') || '').toUpperCase();
 const now = () => Date.now() + offset;
@@ -272,8 +275,8 @@ function seatBadges(v: View, i: number) {
   const s = v.seats[i];
   const g = v.game!;
   const b: string[] = [];
-  if (s.ai) b.push('<i class="chip aichip">AI</i>');
-  else if (!s.connected) b.push('<i class="chip warn">연결 끊김 · AI 대리</i>');
+  // 게임 중에는 누가 AI인지 표시하지 않음 (대기실에서만 표시)
+  if (!s.connected) b.push('<i class="chip warn">연결 끊김 · AI 대리</i>');
   if (g.activeSeat === i) b.push('<i class="chip turn">차례</i>');
   if (s.rank) b.push(`<i class="chip done">${s.rank}등</i>`);
   else if (s.cardCount === 0 && g.phase !== 'hand-over') b.push('<i class="chip">카드를 다 냄</i>');
@@ -290,7 +293,7 @@ function seatHtml(v: View, i: number, pos: string) {
   const n = s.cardCount ?? 0;
   const g = v.game!;
   const d = g.deadline && g.deadline.seat === i && g.activeSeat === i ? ring(g.deadline, 'sm') : '';
-  return `<div class="seat ${pos}${i === v.me ? ' viewing' : ''}">
+  return `<div class="seat ${pos}${i === v.me ? ' viewing' : ''}${g.activeSeat === i ? ' active' : ''}">
     <span class="sname">${esc(s.nickname ?? '')}${d}</span>
     <span class="seggs"><b>${s.eggs ?? 0}</b>알 · ${n}장</span>
     <span class="backs">${Array.from({ length: Math.min(n, 12) }, () => '<span class="back"></span>').join('')}</span>
@@ -435,7 +438,7 @@ function gameHtml(v: View) {
       </div>
       ${handHtml(v)}
     </div>
-    <aside class="log" aria-label="진행 기록"><p class="eyebrow">진행 기록</p><ol>${log.map((l) => `<li>${esc(l)}</li>`).join('')}</ol></aside>
+    <details class="log" id="logBox" ${logOpen ? 'open' : ''}><summary><p class="eyebrow">진행 기록</p></summary><ol>${log.map((l) => `<li>${esc(l)}</li>`).join('')}</ol></details>
   </main>
   ${resultHtml(v)}`;
 }
