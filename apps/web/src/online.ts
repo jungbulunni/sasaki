@@ -14,7 +14,7 @@ interface PlayV { seat: number; cards: CardId[]; kind: string; via: string }
 interface DeadlineV { kind: string; at: number; total: number; seat: number | null }
 interface GameV { handNo: number; multiplier: number; buried: number; careSeat: number | null; phase: string; activeSeat: number | null; leaderSeat: number; runnerSeat: number | null; trick: PlayV[]; revealLeader: number | null; deadline: DeadlineV | null }
 interface MineV { hand: CardId[]; selection: CardId[]; myTurn: boolean; options: { type: 'chatda' | 'mureugi'; cards: CardId[] }[]; noPlay: boolean; canRun: boolean; canDdook: boolean; window: { type: 'kkotda' | 'blackpig'; cards: CardId[] } | null; team: string }
-interface ResultV { kind: string; winnerTeam: string | null; earlyEnd: boolean; decided: number; ranks: number[]; teams: string[]; deltas: number[]; eggs: number[]; multiplier: number; buried: number; careSurvived: boolean | null; nextCare: number | null; ended: boolean; endReason: string | null; eliminated: number[]; standings: { seat: number; nickname: string; eggs: number; place: number }[] | null; ready: number[]; nextAt: number }
+interface ResultV { kind: string; winnerTeam: string | null; earlyEnd: boolean; decided: number; ranks: number[]; teams: string[]; deltas: number[]; eggs: number[]; multiplier: number; buried: number; careSurvived: boolean | null; nextCare: number | null; ended: boolean; endReason: string | null; eliminated: number[]; standings: { seat: number; nickname: string; eggs: number; place: number }[] | null; ready: number[]; nextAt: number; shufflePending: boolean }
 interface View { code: string; status: 'lobby' | 'playing' | 'ended'; host: number; startEggs: number; me: number; serverNow: number; seats: SeatV[]; game: GameV | null; mine: MineV | null; result: ResultV | null; log: { n: number; ev: any }[] }
 
 const app = document.getElementById('app')!;
@@ -103,6 +103,8 @@ function logText(ev: any, v: View | null = view): string | null {
     case 'handOver': return ev.early ? '결과가 정해져 판 종료' : '판 종료';
     case 'left': return `${n(ev.seat)} 연결 끊김 · AI가 대신 플레이`;
     case 'back': return `${n(ev.seat)} 돌아옴`;
+    case 'shuffleRequested': return `${n(ev.seat)}가 자리 바꾸기를 눌렀어요 · 다음 판부터 자리가 바뀌어요`;
+    case 'seatsShuffled': return '── 자리를 새로 섞었어요 ──';
   }
   return null;
 }
@@ -260,6 +262,7 @@ function lobbyHtml(v: View) {
     <ol class="lseats">${seats}</ol>
     ${isHost
       ? `<div class="prow left"><label class="field inline"><span>시작 알</span><input id="eggsIn" type="number" min="1" max="999" value="${v.startEggs}"></label>
+         <button type="button" class="btn" id="shuffleBtn" ${v.seats.filter((s) => s.nickname).length > 1 ? '' : 'disabled'}>자리 섞기</button>
          <button type="button" class="btn primary" id="startBtn" ${full ? '' : 'disabled'}>${full ? '게임 시작' : `${v.seats.filter((s) => s.nickname).length}/4 모이는 중`}</button></div>`
       : `<p class="psub">시작 알 <b>${v.startEggs}</b> · 방장이 시작하기를 기다리는 중이에요</p>`}
   </div></main>`;
@@ -399,7 +402,9 @@ function resultHtml(v: View) {
   } else {
     if (r.nextCare !== null) tail = `<p class="psub">다음 판은 <b>${esc(nm(r.nextCare))}</b>의 배려판입니다. 알을 1개 이상 얻어야 살아남아요.</p>`;
     const imReady = r.ready.includes(v.me);
-    foot = `<button type="button" class="btn primary" id="readyBtn" ${imReady ? 'disabled' : ''}>${imReady ? '다른 사람을 기다리는 중' : '다시 한 판 더'}</button><span class="psub" id="countdown"></span>`;
+    foot = `<button type="button" class="btn primary" id="readyBtn" ${imReady ? 'disabled' : ''}>${imReady ? '다른 사람을 기다리는 중' : '다시 한 판 더'}</button>
+      <button type="button" class="btn" id="shuffleBtn" ${r.shufflePending ? 'disabled' : ''}>${r.shufflePending ? '다음 판에 자리가 바뀌어요' : '자리 바꾸기'}</button>
+      <span class="psub" id="countdown"></span>`;
   }
   return `<div class="overlay" role="dialog" aria-modal="true" aria-label="판 결과"><div class="sheet">
     <p class="eyebrow">${v.game?.handNo ?? ''}판 결과</p><h2>${title}</h2>
@@ -492,6 +497,7 @@ app.addEventListener('click', (e) => {
   else if (id === 'startBtn') socket.emit('start', null, (r: any) => { if (!r?.ok && r?.reason) toast(r.reason); });
   else if (id === 'readyBtn') socket.emit('ready');
   else if (id === 'rematchBtn') socket.emit('rematch');
+  else if (id === 'shuffleBtn') socket.emit('shuffle', null, (r: any) => { if (!r?.ok && r?.reason) toast(r.reason); });
   else if (id === 'copyBtn') {
     const input = document.getElementById('linkIn') as HTMLInputElement;
     navigator.clipboard?.writeText(input.value).then(() => toast('초대 링크를 복사했어요'), () => { input.select(); toast('링크를 길게 눌러 복사하세요'); });

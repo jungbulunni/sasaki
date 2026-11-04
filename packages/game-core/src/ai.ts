@@ -18,8 +18,10 @@ export interface AiView {
   counts: number[];
   fireOwner: boolean;
   canDdook: boolean;
-  window: { type: 'kkotda' | 'blackpig' } | null;
+  window: { type: 'kkotda' | 'blackpig'; cards: CardId[]; baseSeat: number | null } | null;
   options: { type: 'chatda' | 'mureugi'; cards: CardId[] }[];
+  /** 불이 공개된 자리 (모두에게 보이는 정보) */
+  revealedFire: number[];
 }
 
 export function aiView(st: HandState, seat: number): AiView {
@@ -32,8 +34,11 @@ export function aiView(st: HandState, seat: number): AiView {
     counts: st.hands.map((h) => h.length),
     fireOwner: st.fireOwners.includes(seat),
     canDdook: st.phase === 'ddook-declare' && st.runner !== null && teamOf(st, seat) !== teamOf(st, st.runner),
-    window: st.window && st.window.seat === seat ? { type: st.window.type } : null,
+    window: st.window && st.window.seat === seat
+      ? { type: st.window.type, cards: st.window.type === 'kkotda' ? st.window.cards : [], baseSeat: st.window.type === 'kkotda' ? st.window.baseSeat : null }
+      : null,
     options: specialOptions(st, seat),
+    revealedFire: [...st.revealedFire],
   };
 }
 
@@ -50,6 +55,72 @@ function handStrength(hand: CardId[]): number {
   }
   if (hand.includes('H10') && hand.includes('D10')) s += 6;
   return s;
+}
+
+/** 같은 기회에는 같은 결정을 내리도록 하는 고정 난수 (상황이 바뀔 때마다 다시 굴려 결국 차버리는 일 방지) */
+function stableRoll(key: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+/** 공개 정보만으로 확실히 알 수 있는 같은 편 (2대2) */
+function knownTeammate(v: AiView): number | null {
+  const myFire = v.hand.some((c) => c === 'H10' || c === 'D10');
+  const others = v.revealedFire.filter((s) => s !== v.seat);
+  if (myFire && others.length === 1 && !(v.hand.includes('H10') && v.hand.includes('D10'))) return others[0];
+  if (!myFire && others.length === 2) return [0, 1, 2, 3].find((s) => s !== v.seat && !others.includes(s)) ?? null;
+  return null;
+}
+
+const countRank = (hand: CardId[], r: number) => hand.filter((c) => rankOf(c) === r).length;
+
+/**
+ * 찼다(차기)를 할 가치가 있는지 — 아낄 이유가 있으면 확률적으로 아낀다.
+ *  - 다 내거나 거의 다 내게 되면 무조건 찬다
+ *  - 같은 숫자 3·4장(틀·마대)을 깨게 되면 아낀다
+ *  - 쌍카(연속 페어)의 일부면 아낀다
+ *  - 확실한 같은 편이 낸 카드면 아낀다 (같은 편의 흐름을 끊지 않음)
+ *  - A·K 페어는 강한 페어로 남겨두기도 한다
+ *  - 상대가 곧 나갈 것 같으면 선을 잡으러 적극적으로 찬다
+ */
+function chatdaWorth(v: AiView, opt: { cards: CardId[] }, danger: boolean): number {
+  const left = v.hand.length - opt.cards.length;
+  if (left <= 2) return 1;
+  const top = v.trick.at(-1);
+  if (opt.cards.length > 2) return danger ? 0.95 : 0.8; // 쌍카 찼다
+  const r = rankOf(opt.cards[0]);
+  let p = 0.92;
+  const n = countRank(v.hand, r);
+  if (n === 4) p *= 0.15;
+  else if (n === 3) p *= 0.3;
+  if (countRank(v.hand, r - 1) >= 2 && countRank(v.hand, r + 1) >= 2) p *= 0.4;
+  else if ((countRank(v.hand, r - 1) >= 2 && countRank(v.hand, r - 2) >= 2) || (countRank(v.hand, r + 1) >= 2 && countRank(v.hand, r + 2) >= 2)) p *= 0.5;
+  const mate = knownTeammate(v);
+  const target = v.options.find((o) => o.type === 'mureugi') && opt === v.options.find((o) => o.type === 'mureugi')
+    ? v.trick.at(-2)?.seat : top?.seat;
+  if (mate !== null && target === mate) p *= 0.25;
+  if (r >= 13) p *= 0.75;
+  if (danger) p = Math.max(p, 0.85);
+  return p;
+}
+
+/** 꽂다를 할 가치가 있는지 */
+function kkotdaWorth(v: AiView, danger: boolean): number {
+  const cards = v.window!.cards;
+  if (v.hand.length - cards.length <= 1) return 1;
+  let p = 0.9;
+  const mate = knownTeammate(v);
+  if (mate !== null && v.window!.baseSeat === mate) p *= 0.25; // 같은 편이 이미 선을 잡음
+  if (cards.length === 1) {
+    const r = rankOf(cards[0]);
+    const has = (x: number) => countRank(v.hand, x) > 0;
+    if ((has(r - 1) && has(r + 1)) || (has(r - 1) && has(r - 2)) || (has(r + 1) && has(r + 2))) p *= 0.5; // 닐리리 재료
+    if (r === 14) p *= 0.7;
+  }
+  if (danger) p = Math.max(p, 0.85);
+  return p;
 }
 
 const legal = (v: AiView): Combo[] => {
@@ -71,20 +142,26 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
     if (v.canDdook && handStrength(v.hand) >= 10 && rng() < 0.6) return { type: 'declareDdook', seat };
     return null;
   }
-  if (v.window?.type === 'kkotda') return { type: 'kkotda', seat }; // 꽂으면 선을 가져가니 거의 항상 이득
+  const others = v.counts.filter((_, i) => i !== seat && v.counts[i] > 0);
+  const danger = others.some((n) => n <= 2); // 누가 곧 나갈 것 같으면 강하게
+  const situation = `${seat}|${v.hand.slice().sort().join('')}|${v.trick.map((p) => p.combo.cards.join('')).join('/')}`;
+
+  if (v.window?.type === 'kkotda') {
+    return stableRoll(`k|${situation}`) < kkotdaWorth(v, danger) ? { type: 'kkotda', seat } : { type: 'kkotdaPass', seat };
+  }
   if (v.window?.type === 'blackpig') return rng() < 0.85 ? { type: 'blackPigSubmit', seat } : { type: 'blackPigPass', seat };
   if (v.phase !== 'turn') return null;
 
-  // 찰 수 있으면 대부분 찬다 (선을 가져오는 좋은 기회)
-  const opt = v.options[0];
-  if (opt && rng() < 0.85) return { type: opt.type, seat, cards: opt.cards };
+  // 찼다·차기: 전략적으로 판단 (같은 기회에는 같은 결정)
+  for (const opt of v.options) {
+    if (stableRoll(`c|${opt.type}|${situation}`) < chatdaWorth(v, opt, danger)) return { type: opt.type, seat, cards: opt.cards };
+  }
 
   if (v.activeSeat !== seat) return null;
   const plays = legal(v);
-  if (!plays.length) return null;
+  // 낼 패가 없을 때: 찰 수 있지만 아끼기로 했으면 직접 패스 (아니면 서버의 2초 자동 패스)
+  if (!plays.length) return v.options.length && v.trick.length ? { type: 'pass', seat } : null;
 
-  const others = v.counts.filter((_, i) => i !== seat && v.counts[i] > 0);
-  const danger = others.some((n) => n <= 2); // 누가 곧 나갈 것 같으면 강하게
   const endgame = v.hand.length <= 4;
   const weak = plays.filter((c) => !STRONG.includes(c.kind));
   const pool = weak.length ? weak : (danger || endgame ? plays : []);

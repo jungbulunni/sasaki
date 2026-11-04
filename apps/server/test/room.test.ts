@@ -366,3 +366,35 @@ describe('AI 자리', () => {
     expect(room.match!.handNo >= 3 || room.status === 'ended').toBe(true);
   });
 });
+
+describe('자리 바꾸기', () => {
+  it('대기실: 방장만 자리를 섞을 수 있고, 방장·복귀 정보는 사람을 따라간다', () => {
+    const { room, tokens } = makeRoom(3);
+    expect(room.shuffleSeats(1)).toBe('대기실에서는 방장만 자리를 섞을 수 있어요');
+    const before = room.seats.map((s) => s!.nickname);
+    let changed = false;
+    for (let i = 0; i < 10 && !changed; i++) { room.shuffleSeats(room.host); changed = room.seats.some((s, k) => s!.nickname !== before[k]); }
+    expect(changed).toBe(true);
+    expect(room.seats[room.host]!.nickname).toBe('가'); // 방장은 그대로 '가'
+    const r = room.join('', tokens[2]); // '다'의 복귀 정보
+    expect(r.ok && room.seats[r.seat]!.nickname).toBe('다');
+  });
+
+  it('판 결과 화면: 누구나 누를 수 있고, 다음 판에 섞이며 알·선이 사람을 따라간다', () => {
+    const { room } = makeRoom(9);
+    room.start(0);
+    rig(room, [['S5'], ['S6'], ['H10', 'S3'], ['D10', 'C3']]); // '가'(0번) 1등
+    act(room, 0, 'play', ['S5']);
+    act(room, 1, 'play', ['S6']);
+    vi.advanceTimersByTime(TIMES.revealEnd + 5);
+    const eggsByName = Object.fromEntries(room.seats.map((s, i) => [s!.nickname, room.match!.players[i].eggs]));
+    expect(room.shuffleSeats(2)).toBeNull();
+    expect((room.view(0).result as any).shufflePending).toBe(true);
+    [0, 1, 2, 3].forEach((s) => room.readyNext(s));
+    vi.advanceTimersByTime(TIMES.countdown + 5);
+    expect(room.match!.handNo).toBe(2);
+    room.seats.forEach((s, i) => expect(room.match!.players[i].eggs).toBe(eggsByName[s!.nickname]));
+    expect(room.seats[room.hand!.leaderSeat]!.nickname).toBe('가'); // 직전 1등이 선
+    expect(room.shufflePending).toBe(false);
+  });
+});

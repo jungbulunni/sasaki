@@ -67,6 +67,21 @@ async function openRoom(eggs: number) {
   return { code: c.code as string, sockets, joins };
 }
 
+describe('자리 바꾸기 (네트워크)', () => {
+  it('자리를 섞어도 각자 화면에는 자기 이름·자기 자리가 그대로 보인다', async () => {
+    const { sockets } = await openRoom(5);
+    const latest: any[] = [null, null, null, null];
+    sockets.forEach((s, i) => s.on('view', (v) => { latest[i] = v; }));
+    for (let k = 0; k < 5; k++) { await ask(sockets[0], 'shuffle', null); await new Promise((r) => setTimeout(r, 40)); }
+    const names = ['방장', '친구1', '친구2', '친구3'];
+    latest.forEach((v, i) => expect(v.seats[v.me].nickname).toBe(names[i]));
+    await ask(sockets[0], 'start', null);
+    await new Promise((r) => setTimeout(r, 80));
+    latest.forEach((v, i) => { expect(v.seats[v.me].nickname).toBe(names[i]); expect(v.mine.hand).toHaveLength(12); });
+    sockets.forEach((s) => s.close());
+  }, 20_000);
+});
+
 describe('사람 2명 + AI 2명', () => {
   it('두 사람이 접속해 AI 둘과 게임을 끝까지 진행, 유출 없음', async () => {
     const sockets = [0, 1].map(() => connect(url(), { transports: ['websocket'], forceNew: true }));

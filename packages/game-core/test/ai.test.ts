@@ -77,6 +77,43 @@ describe('AI', () => {
     expect(d).toMatchObject({ type: 'play', cards: ['S7', 'H7', 'D7'] });
   });
 
+  it('[전략] 틀을 깨게 되는 찼다는 대부분 아낀다', () => {
+    let kept = 0;
+    for (let i = 0; i < 40; i++) {
+      const extra = ['C3', 'C4', 'C5', 'C6', 'C7', 'C9', 'C11', 'C12', 'C13'].slice(0, 2 + (i % 6));
+      let st = setup([['S8', 'S3', 'H4', 'H5'], ['S12', 'D3', 'D4'], ['H8', 'D8', 'C8', ...extra], ['S13', 'D5', 'D6', 'D7']]);
+      st = ok(st, play(0, 'S8'));
+      const d = aiDecide(aiView(st, 2), seededRng(i));
+      if (d?.type !== 'chatda') kept++;
+    }
+    expect(kept).toBeGreaterThan(20);
+  });
+
+  it('[전략] 평범한 페어면 대부분 찬다', () => {
+    let took = 0;
+    for (let i = 0; i < 40; i++) {
+      const extra = ['C3', 'C4', 'C6', 'S7', 'C11', 'C12', 'C13', 'S5'].slice(0, 2 + (i % 6));
+      let st = setup([['S8', 'S3', 'H4', 'H5'], ['S12', 'D3', 'D4'], ['H8', 'D8', ...extra], ['S13', 'D5', 'D6', 'D7']]);
+      st = ok(st, play(0, 'S8'));
+      if (aiDecide(aiView(st, 2), seededRng(i))?.type === 'chatda') took++;
+    }
+    expect(took).toBeGreaterThan(28);
+  });
+
+  it('[전략] 같은 기회에는 같은 결정 (상황이 그대로면 마음이 바뀌지 않음)', () => {
+    let st = setup([['S8', 'S3', 'H4', 'H5'], ['S12', 'D3', 'D4'], ['H8', 'D8', 'C8', 'C3', 'C4'], ['S13', 'D5', 'D6', 'D7']]);
+    st = ok(st, play(0, 'S8'));
+    const first = aiDecide(aiView(st, 2), seededRng(1))?.type;
+    for (let i = 2; i < 20; i++) expect(aiDecide(aiView(st, 2), seededRng(i))?.type).toBe(first);
+  });
+
+  it('[전략] 찰 수 있는 걸 아꼈고 낼 패가 없으면 직접 패스', () => {
+    let st = setup([['S8', 'S3', 'H4', 'H5'], ['H8', 'D8', 'C8', 'D3', 'D4'], ['S12', 'H3'], ['S13', 'D5', 'D6', 'D7']]);
+    st = ok(st, play(0, 'S8'));
+    const d = aiDecide(aiView(st, 1), seededRng(1));
+    expect(['chatda', 'pass']).toContain(d?.type);
+  });
+
   it('AI 이름은 모두 8자 이내, 서로 다름', () => {
     expect(new Set(AI_NAMES).size).toBe(AI_NAMES.length);
     expect(AI_NAMES.every((n) => n.length <= 8)).toBe(true);

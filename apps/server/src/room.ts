@@ -34,12 +34,15 @@ interface SeatInfo {
   recentActionIds: string[];
   /** 처음부터 AI인 자리 */
   ai: boolean;
+  /** 자리가 바뀌어도 변하지 않는 사람 고유 번호 (연결 관리용) */
+  pid: string;
 }
 
 export type PublicEvent = Exclude<HandEvent, { type: 'returned' } | { type: 'trickCleared' }>
   | { type: 'trickCleared'; leader: number }
   | { type: 'handStart'; handNo: number; leader: number; careSeat: number | null }
-  | { type: 'joined'; seat: number } | { type: 'left'; seat: number } | { type: 'back'; seat: number };
+  | { type: 'joined'; seat: number } | { type: 'left'; seat: number } | { type: 'back'; seat: number }
+  | { type: 'shuffleRequested'; seat: number } | { type: 'seatsShuffled' };
 
 export interface RoomCallbacks {
   emit(seat: number, event: 'view' | 'notice', payload: unknown): void;
@@ -84,7 +87,7 @@ export class Room {
   // ───────── 입장 · 퇴장 ─────────
 
   /** 새로 들어오기 또는 같은 브라우저의 복귀 정보(token)로 자리 되찾기 */
-  join(nickname: string, token?: string): { ok: true; seat: number; token: string } | { ok: false; reason: string } {
+  join(nickname: string, token?: string): { ok: true; seat: number; token: string; pid: string } | { ok: false; reason: string } {
     if (token) {
       const s = this.seats.findIndex((x) => x?.tokenHash === hash(token));
       if (s >= 0) {
@@ -95,7 +98,7 @@ export class Room {
         this.resumeIfPaused();
         this.scheduleAi(); // 복귀 즉시 조작권은 사람에게: 대기 중이던 AI 행동 취소
         this.broadcast();
-        return { ok: true, seat: s, token };
+        return { ok: true, seat: s, token, pid: seat.pid };
       }
     }
     if (this.status !== 'lobby') return { ok: false, reason: '이미 시작한 게임입니다. 같은 브라우저에서만 다시 들어올 수 있어요.' };
@@ -105,11 +108,12 @@ export class Room {
     const free = this.seats.findIndex((x) => x === null);
     if (free < 0) return { ok: false, reason: '방이 가득 찼어요 (4명)' };
     const t = randomBytes(16).toString('hex');
-    this.seats[free] = { nickname: name, tokenHash: hash(t), connected: true, selection: [], recentActionIds: [], ai: false };
+    const pid = randomBytes(8).toString('hex');
+    this.seats[free] = { nickname: name, tokenHash: hash(t), connected: true, selection: [], recentActionIds: [], ai: false, pid };
     if (this.humans().length === 1) this.host = free;
     this.clearExpiry();
     this.broadcast();
-    return { ok: true, seat: free, token: t };
+    return { ok: true, seat: free, token: t, pid };
   }
 
   disconnect(seat: number) {
@@ -164,6 +168,51 @@ export class Room {
 
   // ───────── 시작 ─────────
 
+  seatOfPid(pid: string): number {
+    return this.seats.findIndex((x) => x?.pid === pid);
+  }
+
+  shufflePending = false;
+
+  /**
+   * 자리 바꾸기: 앉는 순서(차례 순서)를 무작위로 섞는다.
+   *  - 대기실: 방장이 누르면 바로 섞음
+   *  - 판 결과 화면: 누구나 누를 수 있고, 다음 판 시작 때 섞임 (한 번만)
+   */
+  shuffleSeats(seat: number): string | null {
+    if (!this.seats[seat] || this.seats[seat]!.ai) return '자리를 바꿀 수 없어요';
+    if (this.status === 'lobby') {
+      if (seat !== this.host) return '대기실에서는 방장만 자리를 섞을 수 있어요';
+      this.permuteSeats();
+      this.broadcast();
+      return null;
+    }
+    if (!this.outcome || this.match?.status !== 'playing') return '판 결과 화면에서만 자리를 바꿀 수 있어요';
+    if (this.shufflePending) return null;
+    this.shufflePending = true;
+    this.pushLog({ type: 'shuffleRequested', seat });
+    this.broadcast();
+    return null;
+  }
+
+  /** 자리를 무작위로 섞고, 자리 번호로 기록된 정보(알, 선, 배려판 대상, 방장)도 함께 옮긴다 */
+  private permuteSeats() {
+    const order = [0, 1, 2, 3];
+    for (let i = 3; i > 0; i--) { const j = Math.floor(this.rng() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+    // order[새 자리] = 원래 자리
+    const newOf = (old: number) => order.indexOf(old);
+    this.seats = order.map((o) => this.seats[o]);
+    this.host = newOf(this.host);
+    if (this.match) {
+      this.match.players = order.map((o) => this.match!.players[o]);
+      if (this.match.careSeat !== null) this.match.careSeat = newOf(this.match.careSeat);
+      if (this.match.lastWinner !== null) this.match.lastWinner = newOf(this.match.lastWinner);
+    }
+    this.ready.clear();
+    this.log = [];
+    this.pushLog({ type: 'seatsShuffled' });
+  }
+
   private humans() {
     return [0, 1, 2, 3].filter((i) => this.seats[i] && !this.seats[i]!.ai);
   }
@@ -176,7 +225,7 @@ export class Room {
     const used = new Set(this.seats.map((x) => x?.nickname));
     const names = AI_NAMES.filter((n) => !used.has(n));
     const name = names[Math.floor(this.rng() * names.length)] ?? `AI${free + 1}`;
-    this.seats[free] = { nickname: name, tokenHash: '', connected: true, selection: [], recentActionIds: [], ai: true };
+    this.seats[free] = { nickname: name, tokenHash: '', connected: true, selection: [], recentActionIds: [], ai: true, pid: randomBytes(8).toString('hex') };
     this.broadcast();
     return null;
   }
@@ -243,6 +292,7 @@ export class Room {
   }
 
   private beginHand() {
+    if (this.shufflePending) { this.shufflePending = false; this.permuteSeats(); }
     const s = startHand(this.match!, this.rng, kstHour());
     this.match = s.match;
     this.hand = s.hand;
@@ -480,6 +530,7 @@ export class Room {
           standings: m.status === 'ended' ? finalStandings(m) : null,
           ready: [...this.ready],
           nextAt: this.nextAt,
+          shufflePending: this.shufflePending,
         };
       }
     }
