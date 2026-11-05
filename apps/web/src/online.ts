@@ -94,7 +94,7 @@ function logText(ev: any, v: View | null = view): string | null {
       const kind = ev.via === 'blackpig' ? '흑돼지' : c ? COMBO_NAME[c.kind] : '';
       return `${n(ev.seat)} ${VIA[ev.via] ? VIA[ev.via] + ' ' : ''}${ev.cards.map(label).join(' ')} · ${kind}`;
     }
-    case 'passed': return `${n(ev.seat)} 패스`;
+    case 'passed': return `${n(ev.seat)} 통과`;
     case 'fireAlarm': return `불이야! ${n(ev.seat)}의 불 공개`;
     case 'pig': return `돼지! ${n(ev.seat)}가 불돼지`;
     case 'noKkot': return '안 꽂아!';
@@ -112,7 +112,9 @@ function logText(ev: any, v: View | null = view): string | null {
   return null;
 }
 
+let pendingPops: number[] = [];
 function onEvent(ev: any, v: View) {
+  if (ev.type === 'passed') { pendingPops.push(ev.seat); return; }
   if (ev.type === 'pig') return shout('돼지!', 'pig', 3000);
   if (ev.type === 'blackPig') return shout('흑돼지!', 'blackpig', 3000);
   if (ev.type === 'played' && VIA[ev.via] && ev.via !== 'blackpig') return shout(VIA[ev.via]);
@@ -283,7 +285,7 @@ function seatBadges(v: View, i: number) {
   if (s.fire) b.push(`<i class="chip firechip">${s.fire === 'pig' ? '돼지' : '불'}</i>`);
   if (s.runner) b.push('<i class="chip">달림</i>');
   if (s.ddooker) b.push('<i class="chip">뚝</i>');
-  if (s.passed) b.push('<i class="chip">패스</i>');
+  if (s.passed) b.push('<i class="chip">통과</i>');
   if (g.careSeat === i) b.push('<i class="chip warn">배려판</i>');
   return b.join('');
 }
@@ -293,9 +295,9 @@ function seatHtml(v: View, i: number, pos: string) {
   const n = s.cardCount ?? 0;
   const g = v.game!;
   const d = g.deadline && g.deadline.seat === i && g.activeSeat === i ? ring(g.deadline, 'sm') : '';
-  return `<div class="seat ${pos}${i === v.me ? ' viewing' : ''}${g.activeSeat === i ? ' active' : ''}">
+  return `<div class="seat ${pos}${i === v.me ? ' viewing' : ''}${g.activeSeat === i ? ' active' : ''}" data-seat="${i}">
     <span class="sname">${esc(s.nickname ?? '')}${d}</span>
-    <span class="seggs"><b>${s.eggs ?? 0}</b>알 · ${n}장</span>
+    <span class="seggs">${n}장</span>
     <span class="backs">${Array.from({ length: Math.min(n, 12) }, () => '<span class="back"></span>').join('')}</span>
     <span class="badges">${seatBadges(v, i)}</span>
   </div>`;
@@ -337,7 +339,7 @@ function statusOf(v: View): { text: string; canPlay: boolean; warn?: boolean } {
   if (m.window) return { text: m.window.type === 'kkotda' ? '꽂을지 정해 주세요' : '흑돼지로 막을지 정해 주세요', canPlay: false };
   if (!m.myTurn) return { text: g.activeSeat !== null ? `${nm(g.activeSeat)}의 차례예요` : '', canPlay: false };
   const cards = [...selected];
-  if (!cards.length) return { text: g.trick.length ? '카드를 고르거나 패스하세요' : '선입니다. 카드를 고르세요', canPlay: false };
+  if (!cards.length) return { text: g.trick.length ? '카드를 고르거나 통과하세요' : '선입니다. 카드를 고르세요', canPlay: false };
   const c = classifyCombo(cards);
   if (!c) return { text: '허용되지 않는 조합', canPlay: false };
   const topP = g.trick.at(-1);
@@ -367,7 +369,7 @@ function handHtml(v: View) {
     <div class="hand">${m.hand.map((c) => cardHtml(c, { sel: selected.has(c), button: true })).join('') || '<p class="pile-note">카드를 모두 냈어요</p>'}</div>
     <div class="actions">
       <button type="button" class="btn primary" id="playBtn" ${st.canPlay ? '' : 'disabled'}>제출</button>
-      <button type="button" class="btn" id="passBtn" ${m.myTurn && g.trick.length && !m.noPlay ? '' : 'disabled'}>패스</button>
+      <button type="button" class="btn" id="passBtn" ${m.myTurn && g.trick.length && !m.noPlay ? '' : 'disabled'}>통과</button>
       ${btns.join('')}
       ${selected.size ? '<button type="button" class="btn ghost" id="clearBtn">선택 해제</button>' : ''}
     </div>
@@ -451,6 +453,26 @@ function render() {
   else html = gameHtml(view);
   app.innerHTML = html + (toastMsg ? `<div class="toast" role="status">${esc(toastMsg)}</div>` : '');
   updateCountdown();
+  flushPops();
+}
+
+/** "통과" 말풍선: 그 사람 자리 위에서 한 번 커졌다가 사라짐 (불이야보다 작게) */
+function flushPops() {
+  const seats = pendingPops;
+  pendingPops = [];
+  for (const seat of seats) {
+    const el = document.querySelector<HTMLElement>(`.seat[data-seat="${seat}"]`);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    const pop = document.createElement('div');
+    pop.className = 'passpop';
+    pop.textContent = '통과';
+    pop.setAttribute('aria-hidden', 'true');
+    pop.style.left = `${r.left + r.width / 2 + window.scrollX}px`;
+    pop.style.top = `${r.top + window.scrollY}px`;
+    document.body.appendChild(pop);
+    setTimeout(() => pop.remove(), 1000);
+  }
 }
 
 function updateCountdown() {

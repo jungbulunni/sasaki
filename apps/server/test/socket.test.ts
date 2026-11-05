@@ -100,25 +100,32 @@ describe('사람 2명 + AI 2명', () => {
     while (Date.now() < deadline && !bots[0].last?.result?.ended) await new Promise((r) => setTimeout(r, 200));
     expect(bots[0].last.result.ended).toBe(true);
     for (const b of bots) expect(b.leaks).toEqual([]);
-    console.log(`  사람2+AI2 방 ${c.code}: ${bots[0].last.game.handNo}판, AI 이름 ${bots[0].last.seats.filter((x: any) => x.ai).map((x: any) => x.nickname).join(', ')}`);
+    expect(bots[0].last.seats.some((x: any) => 'ai' in x && x.ai !== undefined)).toBe(false); // 게임 중 AI 여부 비공개
+    console.log(`  사람2+AI2 방 ${c.code}: ${bots[0].last.game.handNo}판`);
     sockets.forEach((s) => s.close());
   }, 160_000);
 });
 
 describe('4인 실시간 접속', () => {
   it('네 명이 각자 접속해 게임을 끝까지 진행, 주패 유출 없음', async () => {
-    const { code, sockets, joins } = await openRoom(8);
+    const { code, sockets, joins } = await openRoom(6);
     const bots = sockets.map((s, i) => bot(s, joins[i].seat, joins[i].token));
     const started: any = await ask(sockets[0], 'start', null);
     expect(started.ok).toBe(true);
-    const deadline = Date.now() + 90_000;
-    while (Date.now() < deadline && !bots[0].last?.result?.ended) await new Promise((r) => setTimeout(r, 100));
-    expect(bots[0].last.status).toBe('ended');
+    const deadline = Date.now() + 150_000;
+    let lastRev = '', stuckSince = Date.now();
+    while (Date.now() < deadline && !bots[0].last?.result?.ended) {
+      await new Promise((r) => setTimeout(r, 100));
+      const key = JSON.stringify(bots[0].last?.game?.trick) + bots[0].last?.game?.handNo + bots[0].last?.game?.phase;
+      if (key !== lastRev) { lastRev = key; stuckSince = Date.now(); }
+      if (Date.now() - stuckSince > 5000) throw new Error('5초 넘게 진행이 멈춤: ' + JSON.stringify({ game: bots[0].last.game, mine: bots.map((b) => b.last.mine && { myTurn: b.last.mine.myTurn, noPlay: b.last.mine.noPlay, opts: b.last.mine.options, win: b.last.mine.window }) }));
+    }
+    expect(bots[0].last.status, `${bots[0].last.game.handNo}판까지 진행`).toBe('ended');
     expect(bots[0].last.result.standings).toHaveLength(4);
     for (const b of bots) expect(b.leaks, `${b.seat}번 자리 유출`).toEqual([]);
     console.log(`  방 ${code}: ${bots[0].last.game.handNo}판 진행, 화면 갱신 ${bots.reduce((a, b) => a + b.views, 0)}회, 유출 0건`);
     sockets.forEach((s) => s.close());
-  }, 100_000);
+  }, 160_000);
 
   it('게임 중 접속이 끊긴 사람은 같은 브라우저 정보로 같은 자리에 돌아온다', async () => {
     const { sockets, joins, code } = await openRoom(10);

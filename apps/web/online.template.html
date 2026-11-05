@@ -272,6 +272,10 @@ tr.mine td { color: var(--egg); }
 #shout.blackpig span { color: #d9d9de; text-shadow: 0 4px 0 #111, 0 10px 30px var(--shadow); }
 @media (prefers-reduced-motion: reduce) { #shout.face.on, #shout.blackpig .pigface { animation: fade var(--dur, 3s) linear; } }
 @media (max-width: 520px) { .lseats { grid-template-columns: minmax(0, 1fr); } .logo.big { font-size: 46px; } }
+/* 통과 말풍선 */
+.passpop { position: absolute; z-index: 24; transform: translate(-50%, -70%) scale(.4); padding: 3px 14px; border-radius: 999px; background: #F7A8BA; color: #2E1640; border: 3px solid #2E1640; box-shadow: 0 4px 0 #2E1640; font-family: var(--font-display); font-size: clamp(20px, 5vw, 28px); white-space: nowrap; pointer-events: none; animation: passpop 1s ease-out forwards; }
+@keyframes passpop { 0% { opacity: 0; transform: translate(-50%, -40%) scale(.4); } 22% { opacity: 1; transform: translate(-50%, -85%) scale(1.15) rotate(-5deg); } 40% { transform: translate(-50%, -80%) scale(1) rotate(-5deg); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -110%) scale(.95) rotate(-5deg); } }
+@media (prefers-reduced-motion: reduce) { .passpop { animation: fade 1s linear forwards; transform: translate(-50%, -80%); } }
 </style>
 <div id="app"></div>
 <div id="shout" aria-live="polite"></div>

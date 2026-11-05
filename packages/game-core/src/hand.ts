@@ -331,10 +331,10 @@ export function applyHandAction(prev: HandState, action: HandAction): HandResult
     }
 
     case 'pass': {
-      if (st.phase !== 'turn') return fail('지금은 패스할 수 없습니다');
+      if (st.phase !== 'turn') return fail('지금은 통과할 수 없습니다');
       if (action.seat !== st.activeSeat) return fail('자기 차례가 아닙니다');
       const top = topPlay(st);
-      if (!top) return fail('선은 패스할 수 없습니다');
+      if (!top) return fail('선은 통과할 수 없습니다');
       // 패스는 '턴이 지나간 것'으로 세지 않는다 → 무르기 기회 유지 (2026-11-04 확정)
       st.passed.push(action.seat);
       ev.push({ type: 'passed', seat: action.seat });
