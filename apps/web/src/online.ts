@@ -1,5 +1,6 @@
 // M3 온라인 화면: 서버가 보내준 "내 화면 정보"만 그린다. 판정은 전부 서버가 한다.
 import { canBeat, CardId, classifyCombo, COMBO_NAME, isFire, rankOf, suitOf } from '../../../packages/game-core/src/index';
+import { eggSvg, pigBodySvg, pigFaceSvg } from './pig';
 
 declare const io: (opts?: unknown) => Sock;
 interface Sock {
@@ -132,28 +133,8 @@ function shout(text: string, face: 'pig' | 'blackpig' | null = null, ms = 1100) 
   shoutTimer = window.setTimeout(() => { shoutEl.className = ''; shoutEl.innerHTML = ''; }, ms);
 }
 
-/** 귀여운 돼지 얼굴. 불돼지: 빨강·분홍, 흑돼지: 검정·회색에 더 크게 웃는 입 */
 function pigFace(kind: 'pig' | 'blackpig') {
-  const black = kind === 'blackpig';
-  const c = black
-    ? { face: '#3a3a3e', ear: '#1f1f22', inner: '#8b8b92', snout: '#6d6d74', nost: '#1b1b1d', cheek: '#55555b', eye: '#f2f2f2', mouth: '#111' }
-    : { face: '#ffb3c1', ear: '#e8435a', inner: '#ff8aa0', snout: '#ff7f96', nost: '#b3203a', cheek: '#ff6b81', eye: '#2b1418', mouth: '#9e1730' };
-  const mouth = black
-    ? `<path d="M64 132 Q100 176 136 132 Q100 150 64 132Z" fill="${c.mouth}"/><path d="M78 140 Q100 158 122 140" fill="none" stroke="#e9e9ee" stroke-width="5" stroke-linecap="round"/>`
-    : `<path d="M82 136 Q100 150 118 136" fill="none" stroke="${c.mouth}" stroke-width="5" stroke-linecap="round"/>`;
-  const eyes = black
-    ? `<path d="M58 84 Q70 72 82 84" fill="none" stroke="${c.eye}" stroke-width="7" stroke-linecap="round"/><path d="M118 84 Q130 72 142 84" fill="none" stroke="${c.eye}" stroke-width="7" stroke-linecap="round"/>`
-    : `<circle cx="70" cy="84" r="8" fill="${c.eye}"/><circle cx="130" cy="84" r="8" fill="${c.eye}"/><circle cx="73" cy="81" r="2.6" fill="#fff"/><circle cx="133" cy="81" r="2.6" fill="#fff"/>`;
-  return `<svg class="pigface" viewBox="0 0 200 190" aria-hidden="true">
-    <path d="M38 52 L22 6 L78 34 Z" fill="${c.ear}"/><path d="M162 52 L178 6 L122 34 Z" fill="${c.ear}"/>
-    <path d="M42 44 L32 18 L66 36 Z" fill="${c.inner}"/><path d="M158 44 L168 18 L134 36 Z" fill="${c.inner}"/>
-    <ellipse cx="100" cy="100" rx="82" ry="76" fill="${c.face}"/>
-    <ellipse cx="46" cy="118" rx="15" ry="10" fill="${c.cheek}" opacity=".75"/><ellipse cx="154" cy="118" rx="15" ry="10" fill="${c.cheek}" opacity=".75"/>
-    ${eyes}
-    <ellipse cx="100" cy="112" rx="32" ry="22" fill="${c.snout}"/>
-    <ellipse cx="89" cy="112" rx="6" ry="9" fill="${c.nost}"/><ellipse cx="111" cy="112" rx="6" ry="9" fill="${c.nost}"/>
-    ${mouth}
-  </svg>`;
+  return pigFaceSvg(kind);
 }
 
 function toast(m: string) {
@@ -235,42 +216,47 @@ function comboName(kind: string, len: number) {
 function homeHtml() {
   const code = roomCode;
   return `<main class="home">
-    <div class="home-card">
-      <p class="logo big">사사끼</p>
-      <p class="sub">네 명이 각자 기기에서 함께하는 카드게임</p>
-      <form id="homeForm" class="fields1">
-        <label class="field"><span>닉네임 (8자까지)</span><input id="nickIn" maxlength="8" autocomplete="nickname" value="${esc(nickname)}" required></label>
-        ${code ? `<p class="psub">초대받은 방 <b class="code">${esc(code)}</b></p>
-          <div class="prow"><button type="submit" class="btn primary" data-go="join">참가하기</button></div>`
-        : `<div class="prow"><button type="submit" class="btn primary" data-go="create">방 만들기</button></div>
-          <div class="or"><span>또는 방 코드로 참가</span></div>
-          <div class="prow join-row"><input id="codeIn" maxlength="4" placeholder="ABCD" aria-label="방 코드" autocapitalize="characters"><button type="submit" class="btn" data-go="join">참가</button></div>`}
-      </form>
-    </div>
+    <p class="hello">어서와,<br>사사끼는 처음이지?</p>
+    ${pigBodySvg()}
+    <div class="titlebox"><h1 class="title">사사끼</h1></div>
+    <form id="homeForm">
+      <label class="field" for="nickIn">닉네임</label>
+      <input class="input" id="nickIn" maxlength="8" autocomplete="nickname" value="${esc(nickname)}" required>
+      ${code ? `<p class="invited">초대받은 방 <b>${esc(code)}</b></p>
+        <button type="submit" class="btn primary" data-go="join">참가하기</button>`
+      : `<button type="submit" class="btn primary" data-go="create">방 만들기</button>
+        <div class="joinrow"><label class="sr" for="codeIn">방 코드</label><input class="input" id="codeIn" maxlength="4" placeholder="방 코드 ABCD" autocapitalize="characters"><button type="submit" class="btn" data-go="join">참가</button></div>`}
+    </form>
   </main>`;
 }
 
 function lobbyHtml(v: View) {
   const link = `${location.origin}${location.pathname}?room=${v.code}`;
-  const full = v.seats.every((s) => s.nickname);
+  const count = v.seats.filter((s) => s.nickname).length;
+  const full = count === 4;
   const isHost = v.host === v.me;
   const seats = v.seats.map((s, i) => {
     const tools = isHost && !s.nickname ? `<button type="button" class="btn small ai-add" data-addai="1">AI 넣기</button>`
-      : isHost && s.ai ? `<button type="button" class="btn ghost small" data-removeai="${i}">빼기</button>` : '';
-    return `<li class="lseat${s.nickname ? '' : ' empty'}"><span class="lnum">${i + 1}</span><span class="lname">${s.nickname ? esc(s.nickname) : '빈 자리'}</span>${s.ai ? ' <i class="chip aichip">AI</i>' : ''}${i === v.host && s.nickname ? ' <i class="chip">방장</i>' : ''}${i === v.me ? ' <i class="chip turn">나</i>' : ''}${tools}</li>`;
+      : isHost && s.ai ? `<button type="button" class="btn small" data-removeai="${i}">빼기</button>` : '';
+    return `<li class="lseat${s.nickname ? '' : ' empty'}"><span class="lnum">${i + 1}</span><span class="lname">${s.nickname ? esc(s.nickname) : '빈 자리'}</span>${s.ai ? '<i class="chip aichip">AI</i>' : ''}${i === v.host && s.nickname ? '<i class="chip host">방장</i>' : ''}${i === v.me ? '<i class="chip mychip">나</i>' : ''}${tools}</li>`;
   }).join('');
-  return `<main class="home"><div class="home-card wide">
-    <p class="eyebrow">대기실</p>
-    <h2>방 코드 <span class="code">${v.code}</span></h2>
-    <div class="invite"><input id="linkIn" readonly value="${esc(link)}" aria-label="초대 링크"><button type="button" class="btn" id="copyBtn">링크 복사</button></div>
-    <p class="psub">이 링크를 친구들에게 보내세요. 빈 자리는 방장이 AI로 채울 수 있어요. 4자리가 차면 시작합니다.</p>
+  return `<main class="lobby">
+    <span class="logo">사사끼</span>
+    <div class="codebox">
+      <span class="lbl">방 코드</span><span class="code">${v.code}</span>
+      <div class="invite"><label class="sr" for="linkIn">초대 링크</label><input class="input" id="linkIn" readonly value="${esc(link)}"><button type="button" class="btn" id="copyBtn">링크 복사</button></div>
+    </div>
     <ol class="lseats">${seats}</ol>
+    <div class="eggrow"><span>시작 알</span>
+      ${isHost
+        ? `<div class="stepper"><button type="button" class="iconbtn" data-eggs="-1" aria-label="알 줄이기">−</button><span class="val">${eggSvg()}${v.startEggs}</span><button type="button" class="iconbtn" data-eggs="1" aria-label="알 늘리기">+</button></div>`
+        : `<span class="stepper"><span class="val">${eggSvg()}${v.startEggs}</span></span>`}
+    </div>
     ${isHost
-      ? `<div class="prow left"><label class="field inline"><span>시작 알</span><input id="eggsIn" type="number" min="1" max="999" value="${v.startEggs}"></label>
-         <button type="button" class="btn" id="shuffleBtn" ${v.seats.filter((s) => s.nickname).length > 1 ? '' : 'disabled'}>자리 섞기</button>
-         <button type="button" class="btn primary" id="startBtn" ${full ? '' : 'disabled'}>${full ? '게임 시작' : `${v.seats.filter((s) => s.nickname).length}/4 모이는 중`}</button></div>`
-      : `<p class="psub">시작 알 <b>${v.startEggs}</b> · 방장이 시작하기를 기다리는 중이에요</p>`}
-  </div></main>`;
+      ? `<div class="bar"><button type="button" class="btn line" id="shuffleBtn" ${count > 1 ? '' : 'disabled'}>자리 섞기</button>
+         <button type="button" class="btn gold" id="startBtn" ${full ? '' : 'disabled'}>${full ? '게임 시작' : `${count}/4 모이는 중`}</button></div>`
+      : '<p class="waitnote">방장이 시작하기를 기다리는 중이에요</p>'}
+  </main>`;
 }
 
 function seatBadges(v: View, i: number) {
@@ -388,33 +374,40 @@ function resultHtml(v: View) {
   const r = v.result;
   if (!r) return '';
   const T: Record<string, string> = { fire: '불팀', black: '흑팀', pig: '돼지' };
-  const title = { 'win-2v2': `${T[r.winnerTeam!]} 승리`, 'pig-win': '돼지 1등', 'pig-lose': '돼지 꼴찌', water: '물판' }[r.kind];
+  const title = { 'win-2v2': `${T[r.winnerTeam!]} 승리!`, 'pig-win': '돼지 1등!', 'pig-lose': '돼지 꼴찌!', water: '물판' }[r.kind];
   const rows = r.ranks.map((seat, i) => {
     const d = r.deltas[seat];
-    const place = r.earlyEnd && i >= r.decided ? '—' : `${i + 1}등`;
-    return `<tr${seat === v.me ? ' class="mine"' : ''}><td>${place}</td><td>${esc(nm(seat))}</td><td>${T[r.teams[seat]]}</td><td class="num ${d > 0 ? 'up' : d < 0 ? 'down' : ''}">${d > 0 ? '+' : ''}${d}</td><td class="num">${r.eggs[seat]}</td></tr>`;
+    const undecided = r.earlyEnd && i >= r.decided;
+    const cls = seat === v.me ? ' mine' : i === 0 ? ' first' : '';
+    return `<div class="rrow${cls}"><span class="place${undecided ? ' none' : ''}">${undecided ? '—' : `${i + 1}등`}</span>
+      <span class="nm">${esc(nm(seat))}${seat === v.me ? ' <small>나</small>' : ''}</span>
+      <span class="team ${r.teams[seat]}">${T[r.teams[seat]]}</span>
+      <span class="num ${d > 0 ? 'up' : d < 0 ? 'down' : ''}">${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d)}</span><span class="num">${r.eggs[seat]}</span></div>`;
   }).join('');
-  const notes = [`배수 ×${r.multiplier}`, `묻어둔 알 ${r.buried}`];
-  if (r.earlyEnd) notes.unshift('결과가 정해져 조기 종료');
+  const notes: string[] = [];
+  if (r.earlyEnd) notes.push('결과가 정해져 조기 종료');
+  notes.push(`×${r.multiplier}`, `묻어둔 알 ${r.buried}`);
   if (r.careSurvived === true) notes.push('배려판 생존');
   if (r.careSurvived === false) notes.push('배려판 실패');
-  let tail = '';
   let foot = '';
   if (r.ended) {
-    const reason = r.endReason === 'multiple-care' ? '두 명 이상이 동시에 파산해 게임이 끝났습니다' : `${r.eliminated.map(nm).join(', ')} 탈락으로 게임이 끝났습니다`;
-    tail = `<p class="psub">${reason}</p><ol class="final">${r.standings!.map((s) => `<li><b>${s.place}위</b> ${esc(s.nickname)} <span class="num">${s.eggs}알</span></li>`).join('')}</ol>`;
-    foot = v.host === v.me ? '<button type="button" class="btn primary" id="rematchBtn">같은 멤버로 새 게임</button>' : '<p class="psub">방장이 새 게임을 열 수 있어요</p>';
+    const reason = r.endReason === 'multiple-care' ? '두 명 이상이 동시에 파산해 게임이 끝났어요' : `${r.eliminated.map(nm).join(', ')} 탈락으로 게임이 끝났어요`;
+    foot = `<p class="endnote">${reason}</p>
+      <ol class="final">${r.standings!.map((s) => `<li><span><b>${s.place}위</b>${esc(s.nickname)}</span><span class="num">${s.eggs}알</span></li>`).join('')}</ol>
+      ${v.host === v.me ? '<div class="bar"><button type="button" class="btn gold" id="rematchBtn">같은 멤버로 새 게임</button></div>' : '<p class="endnote">방장이 새 게임을 열 수 있어요</p>'}`;
   } else {
-    if (r.nextCare !== null) tail = `<p class="psub">다음 판은 <b>${esc(nm(r.nextCare))}</b>의 배려판입니다. 알을 1개 이상 얻어야 살아남아요.</p>`;
     const imReady = r.ready.includes(v.me);
-    foot = `<button type="button" class="btn primary" id="readyBtn" ${imReady ? 'disabled' : ''}>${imReady ? '다른 사람을 기다리는 중' : '다시 한 판 더'}</button>
-      <button type="button" class="btn" id="shuffleBtn" ${r.shufflePending ? 'disabled' : ''}>${r.shufflePending ? '다음 판에 자리가 바뀌어요' : '자리 바꾸기'}</button>
-      <span class="psub" id="countdown"></span>`;
+    foot = `${r.nextCare !== null ? `<p class="endnote">다음 판은 <b>${esc(nm(r.nextCare))}</b>의 배려판이에요. 알을 1개 이상 얻어야 살아남아요.</p>` : ''}
+      <div class="countdown" id="countdown"><span class="n"></span><span class="t"></span></div>
+      <div class="bar"><button type="button" class="btn gold" id="readyBtn" ${imReady ? 'disabled' : ''}>${imReady ? '기다리는 중' : '다시 한 판 더'}</button>
+      <button type="button" class="btn line" id="shuffleBtn" ${r.shufflePending ? 'disabled' : ''}>${r.shufflePending ? '다음 판에 바뀜' : '자리 바꾸기'}</button></div>`;
   }
+  const happy = r.kind !== 'water';
   return `<div class="overlay" role="dialog" aria-modal="true" aria-label="판 결과"><div class="sheet">
-    <p class="eyebrow">${v.game?.handNo ?? ''}판 결과</p><h2>${title}</h2>
-    <div class="tablewrap"><table><thead><tr><th>순위</th><th>이름</th><th>팀</th><th>증감</th><th>누적 알</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="psub">${notes.join(' · ')}</p>${tail}<div class="prow">${foot}</div></div></div>`;
+    <div class="reshead"><div><p class="eyebrow">${v.game?.handNo ?? ''}판 결과</p><h2>${title}</h2></div>${pigFaceSvg('pig', happy ? 'happy' : 'normal')}</div>
+    <div class="restable"><div class="rrow head"><span>순위</span><span>이름</span><span>팀</span><span style="text-align:right">증감</span><span style="text-align:right">알</span></div>
+      ${rows}<p class="resnote">${notes.join(' · ')}</p></div>
+    <div class="resfoot">${foot}</div></div></div>`;
 }
 
 function gameHtml(v: View) {
@@ -424,11 +417,14 @@ function gameHtml(v: View) {
   const log = [...v.log].reverse().map((l) => logText(l.ev)).filter(Boolean) as string[];
   return `
   <header class="top">
-    <div class="brand"><span class="logo">사사끼</span><span class="sub">방 ${v.code}</span></div>
+    <span class="logo">사사끼</span>
     <div class="meta">
-      <span>${g.handNo}판</span><span>×${g.multiplier}</span>
-      <span class="buried" title="묻어둔 알 ${g.buried}개">${Array.from({ length: buried }, () => '<i></i>').join('')}<em>${g.buried}</em></span>
-      <button type="button" class="btn ghost small" id="soundBtn" aria-pressed="${soundOn}">소리 ${soundOn ? '켜짐' : '꺼짐'}</button>
+      <span class="pill">${g.handNo}판</span>
+      ${g.multiplier > 1 ? `<span class="pill hot">×${g.multiplier}</span>` : ''}
+      <span class="pill buried" title="묻어둔 알 ${g.buried}개">${Array.from({ length: Math.max(1, buried) }, () => eggSvg()).join('')}<em>${g.buried}</em></span>
+      <button type="button" class="iconbtn" id="soundBtn" aria-pressed="${soundOn}" aria-label="${soundOn ? '소리 끄기' : '소리 켜기'}">${soundOn
+        ? '<svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg>'
+        : '<svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>'}</button>
     </div>
   </header>
   <main class="layout">
@@ -451,6 +447,7 @@ function render() {
   if (!view) html = homeHtml();
   else if (view.status === 'lobby') html = lobbyHtml(view);
   else html = gameHtml(view);
+  document.body.dataset.screen = !view ? 'home' : view.status === 'lobby' ? 'lobby' : 'game';
   app.innerHTML = html + (toastMsg ? `<div class="toast" role="status">${esc(toastMsg)}</div>` : '');
   updateCountdown();
   flushPops();
@@ -479,9 +476,9 @@ function updateCountdown() {
   const el = document.getElementById('countdown');
   const r = view?.result;
   if (!el || !r || r.ended) return;
-  const left = Math.ceil((r.nextAt - now()) / 1000);
-  el.textContent = left <= 3 ? ` ${Math.max(1, left)}` : ` ${left}초 뒤 다음 판`;
-  el.classList.toggle('count', left <= 3);
+  const left = Math.max(1, Math.ceil((r.nextAt - now()) / 1000));
+  el.querySelector('.n')!.textContent = String(left);
+  el.querySelector('.t')!.textContent = left <= 3 ? '곧 시작!' : '초 뒤 다음 판';
 }
 setInterval(updateCountdown, 250);
 
@@ -504,6 +501,8 @@ app.addEventListener('click', (e) => {
     render();
     return;
   }
+  const eggBtn = t.closest<HTMLElement>('[data-eggs]');
+  if (eggBtn && view) { socket.emit('setEggs', Math.max(1, Math.min(999, view.startEggs + Number(eggBtn.dataset.eggs)))); return; }
   const addAi = t.closest<HTMLElement>('[data-addai]');
   if (addAi) { socket.emit('addAi', null, (r: any) => { if (!r?.ok && r?.reason) toast(r.reason); }); return; }
   const rmAi = t.closest<HTMLElement>('[data-removeai]');
