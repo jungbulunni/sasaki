@@ -71,6 +71,14 @@ export function startServer(port = Number(process.env.PORT) || 3000) {
     socket.on('select', (cards: string[]) => room?.select(me(), cards));
     socket.on('ready', () => room?.readyNext(me()));
     socket.on('rematch', () => room?.rematch(me()));
+    socket.on('leave', (_: unknown, ack?: (x: unknown) => void) => {
+      if (!room) return ack?.({ ok: true });
+      const err = room.leave(me());
+      if (err) return ack?.({ ok: false, reason: err });
+      socketsByPid.delete(`${room.code}:${pid}`);
+      room = null; pid = '';
+      ack?.({ ok: true });
+    });
     socket.on('shuffle', (_: unknown, ack?: (x: unknown) => void) => { const err = room?.shuffleSeats(me()); ack?.({ ok: !err, reason: err }); });
     socket.on('disconnect', () => {
       if (!room) return;

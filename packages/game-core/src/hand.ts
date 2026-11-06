@@ -224,8 +224,17 @@ function targetRanks(target: Play): number[] {
 }
 
 /** 찼다 카드가 대상에 맞는지: 대상 숫자마다 정확히 2장 */
+/** ♥10♦10 두 장은 언제나 불돼지 — 찼다·차기 카드로 쓸 수 없다 (2026-11-05 확정) */
+const isBulpigPair = (cards: CardId[]) => cards.length === 2 && cards.includes('H10') && cards.includes('D10');
+
+/** 같은 숫자 카드 중 찼다용 두 장 고르기: 불 두 장이 함께 묶이지 않게 흑 10을 먼저 쓴다 */
+function pickTwo(hand: CardId[], r: number): CardId[] {
+  return hand.filter((c) => rankOf(c) === r).sort((a, b) => Number(isFire(a)) - Number(isFire(b))).slice(0, 2);
+}
+
 function validChatdaCards(target: Play, cards: CardId[]): boolean {
   if (target.combo.kind !== 'single' && target.combo.kind !== 'nilliri') return false;
+  if (isBulpigPair(cards)) return false;
   const ranks = targetRanks(target);
   if (cards.length !== ranks.length * 2) return false;
   return ranks.every((r) => cards.filter((c) => rankOf(c) === r).length === 2);
@@ -369,6 +378,7 @@ export function applyHandAction(prev: HandState, action: HandAction): HandResult
       if (!hasCards(st.hands[action.seat], action.cards)) return fail('주패에 없는 카드입니다');
       if (action.cards.length !== 2 || !action.cards.every((c) => rankOf(c) === m.xRank))
         return fail('무르기 조건에 맞지 않습니다');
+      if (isBulpigPair(action.cards)) return fail('불돼지는 자기 차례에만 낼 수 있습니다');
       st.trick.pop();
       st.hands[m.ySeat].push(m.yCard);
       ev.push({ type: 'returned', seat: m.ySeat, card: m.yCard });
@@ -474,13 +484,13 @@ export function specialOptions(st: HandState, seat: number): { type: 'chatda' | 
   const hand = st.hands[seat];
   const top = topPlay(st);
   if (top && top.via === 'play' && top.seat !== seat && (top.combo.kind === 'single' || top.combo.kind === 'nilliri')) {
-    const cards = targetRanks(top).flatMap((r) => hand.filter((c) => rankOf(c) === r).slice(0, 2));
+    const cards = targetRanks(top).flatMap((r) => pickTwo(hand, r));
     if (validChatdaCards(top, cards)) out.push({ type: 'chatda', cards });
   }
   const m = st.mureugi;
   if (m && m.xSeat !== seat) {
-    const cards = hand.filter((c) => rankOf(c) === m.xRank).slice(0, 2);
-    if (cards.length === 2) out.push({ type: 'mureugi', cards });
+    const cards = pickTwo(hand, m.xRank);
+    if (cards.length === 2 && !isBulpigPair(cards)) out.push({ type: 'mureugi', cards });
   }
   return out;
 }

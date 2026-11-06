@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyHandBatch, hasNoPlay, legalPlays, timeoutAction } from '../src/hand';
+import { applyHandBatch, hasNoPlay, legalPlays, specialOptions, timeoutAction } from '../src/hand';
 import { chatda, events, mureugi, ok, pass, play, rejected, setup } from './helpers';
 
 describe('턴과 선', () => {
@@ -278,6 +278,33 @@ describe('완주와 특수 행동', () => {
 });
 
 describe('불돼지 · 흑돼지', () => {
+  it('[확정] 싱글 10 위에 ♥10♦10은 찼다가 아니라 불돼지 (꽂다 기회 없음)', () => {
+    let st = setup([['S10', 'S3'], ['H10', 'D10', 'S4'], ['C10', 'S5'], ['S6']]);
+    st = ok(st, play(0, 'S10'));
+    rejected(st, chatda(1, 'H10', 'D10'));
+    expect(specialOptions(st, 1)).toEqual([]);
+    st = ok(st, play(1, 'H10', 'D10')); // 자기 차례에 불돼지로
+    expect(events()).toContainEqual({ type: 'pig', seat: 1 });
+    expect(st.window?.type).not.toBe('kkotda');
+    expect(st.leaderSeat).toBe(1);
+  });
+
+  it('[확정] ♥10♦10으로 차기(무르기)도 불가', () => {
+    let st = setup([['S10', 'S3'], ['S11', 'S4'], ['H10', 'D10', 'S5'], ['C10', 'S6']]);
+    st = ok(st, play(0, 'S10'));
+    st = ok(st, play(1, 'S11'));
+    expect(specialOptions(st, 2)).toEqual([]);
+    rejected(st, mureugi(2, 'H10', 'D10'));
+  });
+
+  it('불 한 장과 흑 10을 함께 가졌으면 흑 10을 먼저 써서 찰 수 있다', () => {
+    let st = setup([['S10', 'S3'], ['H10', 'D10', 'C10', 'S4'], ['S5'], ['S6']]);
+    st = ok(st, play(0, 'S10'));
+    const o = specialOptions(st, 1);
+    expect(o).toHaveLength(1);
+    expect(o[0].cards).toContain('C10');
+  });
+
   const pigHands = () => [['H10', 'D10', 'S3'], ['S4', 'H4'], ['S10', 'C10', 'S5'], ['S6', 'H6']];
 
   it('불돼지 후 흑돼지 보유자에게 선택 창, 시간 초과 시 자동 통과 → 불돼지 제출자 선', () => {

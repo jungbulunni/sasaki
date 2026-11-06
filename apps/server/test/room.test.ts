@@ -410,3 +410,54 @@ describe('AI 숨김', () => {
     expect(json.includes('"ai"')).toBe(false);
   });
 });
+
+describe('[확정] 판 결과 화면에서 나가기', () => {
+  function endedRoom() {
+    const { room, tokens } = makeRoom(4);
+    room.start(0);
+    rig(room, [['S5'], ['S6'], ['H10', 'S3'], ['D10', 'C3']]);
+    act(room, 0, 'play', ['S5']);
+    act(room, 1, 'play', ['S6']);
+    vi.advanceTimersByTime(TIMES.revealEnd + 5);
+    return { room, tokens };
+  }
+
+  it('나간 자리는 AI가 이어받고 알은 그대로, 복귀 정보는 무효', () => {
+    const { room, tokens } = endedRoom();
+    const eggs = room.match!.players[2].eggs;
+    expect(room.leave(2)).toBeNull();
+    expect(room.seats[2]!.ai).toBe(true);
+    expect(room.join('', tokens[2]).ok).toBe(false);
+    [0, 1, 3].forEach((s) => room.readyNext(s));
+    vi.advanceTimersByTime(TIMES.countdown + 5);
+    expect(room.match!.handNo).toBe(2);
+    expect(room.match!.players[2].eggs).toBe(eggs);
+  });
+
+  it('나머지가 이미 "다시 한 판 더"를 눌렀으면 나가는 순간 바로 카운트다운', () => {
+    const { room } = endedRoom();
+    [0, 1, 3].forEach((s) => room.readyNext(s));
+    expect(room.match!.handNo).toBe(1);
+    room.leave(2);
+    vi.advanceTimersByTime(TIMES.countdown + 5);
+    expect(room.match!.handNo).toBe(2);
+  });
+
+  it('방장이 나가면 다른 사람이 방장이 된다', () => {
+    const { room } = endedRoom();
+    room.leave(0);
+    expect(room.host).not.toBe(0);
+    expect(room.seats[room.host]!.ai).toBe(false);
+  });
+
+  it('나간 사람 자리의 AI가 다음 판에서 실제로 카드를 낸다', () => {
+    const { room } = endedRoom();
+    room.leave(0);
+    [1, 2, 3].forEach((s) => room.readyNext(s));
+    vi.advanceTimersByTime(TIMES.countdown + 5);
+    vi.advanceTimersByTime(TIMES.window + 5);
+    rig(room, [['S5', 'S9', 'H10'], ['S6', 'S12', 'D10'], ['S3', 'S8'], ['S7', 'C3']], 0);
+    vi.advanceTimersByTime(4500);
+    expect(room.hand!.trick[0]?.seat).toBe(0);
+  });
+});

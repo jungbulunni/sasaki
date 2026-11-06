@@ -42,7 +42,8 @@ export type PublicEvent = Exclude<HandEvent, { type: 'returned' } | { type: 'tri
   | { type: 'trickCleared'; leader: number }
   | { type: 'handStart'; handNo: number; leader: number; careSeat: number | null }
   | { type: 'joined'; seat: number } | { type: 'left'; seat: number } | { type: 'back'; seat: number }
-  | { type: 'shuffleRequested'; seat: number } | { type: 'seatsShuffled' };
+  | { type: 'shuffleRequested'; seat: number } | { type: 'seatsShuffled' }
+  | { type: 'leftGame'; seat: number };
 
 export interface RoomCallbacks {
   emit(seat: number, event: 'view' | 'notice', payload: unknown): void;
@@ -332,11 +333,38 @@ export class Room {
     if (s && Array.isArray(cards)) s.selection = cards.filter((c) => typeof c === 'string').slice(0, 12);
   }
 
+  /**
+   * 나가기 (판 결과 화면): 그 자리는 이후 AI가 계속 맡는다. 알·순서는 그대로.
+   * 나간 사람의 복귀 정보는 무효가 된다.
+   */
+  leave(seat: number): string | null {
+    const s = this.seats[seat];
+    if (!s || s.ai) return '나갈 수 없어요';
+    if (this.status === 'lobby') { this.disconnect(seat); return null; }
+    s.ai = true;
+    s.connected = true;
+    s.tokenHash = '';
+    this.ready.delete(seat);
+    this.pushLog({ type: 'leftGame', seat });
+    if (this.host === seat) this.host = this.humans()[0] ?? this.host;
+    if (!this.humans().some((i) => this.seats[i]!.connected)) { this.pauseAll(); this.broadcast(); return null; }
+    this.checkAllReady();
+    this.arm();
+    this.scheduleAi();
+    this.broadcast();
+    return null;
+  }
+
+  private checkAllReady() {
+    if (!this.outcome || this.reveal || this.match?.status !== 'playing') return;
+    const humans = [0, 1, 2, 3].filter((i) => this.seats[i]?.connected && !this.seats[i]!.ai);
+    if (humans.length && humans.every((i) => this.ready.has(i))) this.nextAt = Math.min(this.nextAt, Date.now() + TIMES.countdown);
+  }
+
   readyNext(seat: number) {
     if (!this.outcome || this.reveal || this.match?.status !== 'playing') return;
     this.ready.add(seat);
-    const humans = [0, 1, 2, 3].filter((i) => this.seats[i]?.connected && !this.seats[i]!.ai);
-    if (humans.every((i) => this.ready.has(i))) this.nextAt = Math.min(this.nextAt, Date.now() + TIMES.countdown);
+    this.checkAllReady();
     this.arm();
     this.broadcast();
   }

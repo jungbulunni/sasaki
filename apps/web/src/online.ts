@@ -29,6 +29,7 @@ let lastLogN = -1;
 let toastMsg = '';
 let toastTimer = 0;
 let joining = false;
+let leaveArmed = false; // 나가기는 한 번 더 눌러야 실행
 // 진행 기록: 넓은 화면은 펼치고, 휴대폰은 접어 둠 (사용자가 바꾸면 그대로 유지)
 let logOpen = window.matchMedia('(min-width: 861px)').matches;
 document.addEventListener('toggle', (e) => { if ((e.target as HTMLElement).id === 'logBox') logOpen = (e.target as HTMLDetailsElement).open; }, true);
@@ -109,6 +110,7 @@ function logText(ev: any, v: View | null = view): string | null {
     case 'back': return `${n(ev.seat)} 돌아옴`;
     case 'shuffleRequested': return `${n(ev.seat)}가 자리 바꾸기를 눌렀어요 · 다음 판부터 자리가 바뀌어요`;
     case 'seatsShuffled': return '── 자리를 새로 섞었어요 ──';
+    case 'leftGame': return `${n(ev.seat)} 나감 · 이제 AI가 대신해요`;
   }
   return null;
 }
@@ -305,7 +307,7 @@ function centerHtml(v: View) {
     if (g.activeSeat !== null) return `<p class="pile-note"><b>${esc(nm(g.activeSeat))}</b> 선 · 아무 조합이나 낼 수 있어요</p>`;
     return '<p class="pile-note">&nbsp;</p>';
   }
-  const plays = g.trick.slice(-4);
+  const plays = g.trick.slice(-2); // 직전 카드(선명) + 그 앞 카드(흐리게)만
   const pile = plays.map((p, i) => {
     const last = i === plays.length - 1;
     const name = p.via === 'blackpig' ? '흑돼지' : COMBO_NAME[p.kind as keyof typeof COMBO_NAME];
@@ -394,13 +396,15 @@ function resultHtml(v: View) {
     const reason = r.endReason === 'multiple-care' ? '두 명 이상이 동시에 파산해 게임이 끝났어요' : `${r.eliminated.map(nm).join(', ')} 탈락으로 게임이 끝났어요`;
     foot = `<p class="endnote">${reason}</p>
       <ol class="final">${r.standings!.map((s) => `<li><span><b>${s.place}위</b>${esc(s.nickname)}</span><span class="num">${s.eggs}알</span></li>`).join('')}</ol>
-      ${v.host === v.me ? '<div class="bar"><button type="button" class="btn gold" id="rematchBtn">같은 멤버로 새 게임</button></div>' : '<p class="endnote">방장이 새 게임을 열 수 있어요</p>'}`;
+      <div class="bar">${v.host === v.me ? '<button type="button" class="btn gold" id="rematchBtn">같은 멤버로 새 게임</button>' : ''}<button type="button" class="btn line" id="leaveBtn">${leaveArmed ? '정말 나갈까요? 한 번 더 누르면 나가요' : '나가기'}</button></div>
+      ${v.host === v.me ? '' : '<p class="endnote">방장이 새 게임을 열 수 있어요</p>'}`;
   } else {
     const imReady = r.ready.includes(v.me);
     foot = `${r.nextCare !== null ? `<p class="endnote">다음 판은 <b>${esc(nm(r.nextCare))}</b>의 배려판이에요. 알을 1개 이상 얻어야 살아남아요.</p>` : ''}
       <div class="countdown" id="countdown"><span class="n"></span><span class="t"></span></div>
       <div class="bar"><button type="button" class="btn gold" id="readyBtn" ${imReady ? 'disabled' : ''}>${imReady ? '기다리는 중' : '다시 한 판 더'}</button>
-      <button type="button" class="btn line" id="shuffleBtn" ${r.shufflePending ? 'disabled' : ''}>${r.shufflePending ? '다음 판에 바뀜' : '자리 바꾸기'}</button></div>`;
+      <button type="button" class="btn line" id="shuffleBtn" ${r.shufflePending ? 'disabled' : ''}>${r.shufflePending ? '다음 판에 바뀜' : '자리 바꾸기'}</button></div>
+      <button type="button" class="btn ghost leave" id="leaveBtn">${leaveArmed ? '정말 나갈까요? 한 번 더 누르면 나가요' : '나가기'}</button>`;
   }
   const happy = r.kind !== 'water';
   return `<div class="overlay" role="dialog" aria-modal="true" aria-label="판 결과"><div class="sheet">
@@ -413,15 +417,12 @@ function resultHtml(v: View) {
 function gameHtml(v: View) {
   const g = v.game!;
   const pos = (k: number) => (v.me + k) % 4; // 반시계: 오른쪽 → 위 → 왼쪽
-  const buried = Math.min(g.buried, 24);
   const log = [...v.log].reverse().map((l) => logText(l.ev)).filter(Boolean) as string[];
   return `
   <header class="top">
     <span class="logo">사사끼</span>
     <div class="meta">
-      <span class="pill">${g.handNo}판</span>
       ${g.multiplier > 1 ? `<span class="pill hot">×${g.multiplier}</span>` : ''}
-      <span class="pill buried" title="묻어둔 알 ${g.buried}개">${Array.from({ length: Math.max(1, buried) }, () => eggSvg()).join('')}<em>${g.buried}</em></span>
       <button type="button" class="iconbtn" id="soundBtn" aria-pressed="${soundOn}" aria-label="${soundOn ? '소리 끄기' : '소리 켜기'}">${soundOn
         ? '<svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg>'
         : '<svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>'}</button>
@@ -521,6 +522,18 @@ app.addEventListener('click', (e) => {
   else if (id === 'startBtn') socket.emit('start', null, (r: any) => { if (!r?.ok && r?.reason) toast(r.reason); });
   else if (id === 'readyBtn') socket.emit('ready');
   else if (id === 'rematchBtn') socket.emit('rematch');
+  else if (id === 'leaveBtn') {
+    if (!leaveArmed) { leaveArmed = true; render(); setTimeout(() => { leaveArmed = false; render(); }, 4000); return; }
+    leaveArmed = false;
+    socket.emit('leave', null, (r: any) => {
+      if (!r?.ok) return toast(r?.reason ?? '나갈 수 없어요');
+      store.set(`sasaki:token:${roomCode}`, '');
+      view = null; roomCode = ''; lastLogN = -1; selected.clear();
+      history.replaceState(null, '', location.pathname);
+      render();
+      toast('게임에서 나왔어요. 내 자리는 AI가 이어서 해요');
+    });
+  }
   else if (id === 'shuffleBtn') socket.emit('shuffle', null, (r: any) => { if (!r?.ok && r?.reason) toast(r.reason); });
   else if (id === 'copyBtn') {
     const input = document.getElementById('linkIn') as HTMLInputElement;
