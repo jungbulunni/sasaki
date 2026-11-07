@@ -328,7 +328,6 @@ details.log:not([open]) > summary .eyebrow::after { content: " ▸"; }
   .seat .backs { display: none; }
   .seat.top, .seat.bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px 8px; }
   .seat.top .badges, .seat.bottom .badges { flex-basis: 100%; }
-  .seat.top .badges:empty, .seat.bottom .badges:empty, .badges:empty { display: none; }
   .pile { min-height: 112px; }
   .pilecards { flex-wrap: nowrap; gap: 8px; }
   .me { gap: 8px; padding: 10px 10px 12px; }
@@ -358,6 +357,72 @@ details.log:not([open]) > summary .eyebrow::after { content: " ▸"; }
   .lseat { min-height: 48px; } .lseats { gap: 8px; }
   .eggrow { padding: 8px 12px; }
   .lobby .btn { min-height: 48px; }
+}
+
+/* ── 고정 크기 게임판 (2026-11-07) ──
+   카드를 내기 전·한 장·여러 장·상대가 받아칠 때 모두 판과 자리 칸 크기가 그대로여서
+   내 주패 위치가 움직이지 않는다. 크기는 아래 변수로만 정한다. */
+.felt { --seat-h: 96px; --side-h: 120px; --pile-h: 200px; --cw: 46px; --back-w: 13px; --back-o: -6px;
+  grid-template-rows: var(--seat-h) var(--pile-h) var(--seat-h); align-items: center; }
+.seat, .seat.top, .seat.bottom { display: grid; grid-template-rows: auto auto 1fr; align-content: start; height: var(--seat-h); overflow: hidden; }
+.seat.left, .seat.right { height: var(--side-h); width: 100%; }
+.sname { height: 1.5em; line-height: 1.5; }
+.sname .ring { width: 16px; height: 16px; margin-left: 2px; }
+/* 남은 카드: 뒷면 그림 + 숫자 */
+.scount { display: inline-flex; align-items: center; justify-content: center; gap: 5px; max-width: 100%; min-height: calc(var(--back-w) * 1.46); }
+.seat .backs { display: flex; flex: none; min-height: 0; overflow: visible; }
+.seat .back { width: var(--back-w); height: calc(var(--back-w) * 1.46); margin-left: var(--back-o); }
+.seat .back:first-child { margin-left: 0; }
+.seggs { white-space: nowrap; }
+.badges, .seat.top .badges, .seat.bottom .badges { flex-basis: auto; align-self: start; align-content: flex-start; overflow: hidden; height: 100%; }
+
+/* 가운데 더미: 앞 카드가 흐리게 깔리고, 방금 낸 카드가 그 위에 겹쳐 쌓인다 */
+.pile { height: var(--pile-h); min-height: 0; padding: 0; display: block; position: relative; container-type: inline-size; }
+.pile > .pile-note { position: absolute; inset: 0; display: grid; place-items: center; padding: 0 6px; }
+.pilewrap { position: absolute; inset: 0; display: grid; place-items: center; }
+.pilecards { display: grid; place-items: start center; flex-wrap: nowrap; gap: 0; }
+.pilecards > .play { grid-area: 1 / 1; }
+.play.prev { opacity: .42; z-index: 0; }
+.play.prev .pcards { transform: translate(-16px, -10px) rotate(-9deg); }
+.play.last { opacity: 1; z-index: 1; }
+.play.last .pcards { transform: rotate(2.5deg); }
+.pcards { flex-wrap: nowrap; gap: 0; }
+/* 장수가 많으면 조금 작게 + 부채꼴처럼 겹쳐 펼쳐서, 판 폭을 넘지 않게 */
+.pile .play .card, .pile .play.last .card { --w: clamp(22px, calc((100cqw - 12px) / var(--n, 1) * 2.2), var(--cw)); padding: 2px 3px 2px 2px; }
+.pile .pcards > .card + .card { margin-left: min(3px, calc((100cqw - 12px - var(--n) * var(--w)) / (var(--n) - 1))); }
+.pby, .play.last .pby { max-width: 100cqw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cream); font-size: 13px; font-weight: 800; }
+.pilewrap > .lead-note { position: absolute; top: 2px; left: 0; right: 0; display: flex; justify-content: center; z-index: 2; }
+.pile > .panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 100%; z-index: 2; gap: 6px; }
+.ptitle { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* 내 주패 머리: 이름 줄과 안내 줄을 각각 한 줄로 고정 (안내 문구 길이가 바뀌어도 주패가 안 움직임) */
+.me-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.me-name { height: 28px; white-space: nowrap; overflow: hidden; }
+.status { display: block; height: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nopass { position: absolute; z-index: 5; left: 10px; right: 10px; top: 68px; justify-content: center; }
+
+@media (max-width: 860px) { .felt { --pile-h: 190px; } }
+@media (max-width: 600px) {
+  .felt { --seat-h: 72px; --side-h: 104px; --pile-h: 124px; --cw: 33px; --back-w: 11px; --back-o: -5px; }
+  /* 양옆 자리는 폭이 좁아서 뒷면 그림 아래에 숫자 */
+  .seat.left .scount, .seat.right .scount { flex-direction: column; gap: 1px; }
+  .seat, .seat.top, .seat.bottom { gap: 2px; }
+  .sname .ring { width: 14px; height: 14px; }
+  .seggs { font-size: 10px; }
+  .pby, .play.last .pby { font-size: 12px; }
+  .play.prev .pcards { transform: translate(-9px, -7px) rotate(-8deg); }
+  .ptitle { font-size: 20px; }
+  .psub { font-size: 11px; line-height: 1.35; }
+  .panel .btn.hot { min-height: 34px; font-size: 16px; }
+  .panel { gap: 4px; }
+  .nopass { top: 60px; }
+}
+@media (max-width: 600px) and (max-height: 760px) {
+  .felt { --seat-h: 62px; --side-h: 98px; --pile-h: 108px; --cw: 30px; }
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  .felt { --seat-h: 62px; --side-h: 84px; --pile-h: 120px; --cw: 32px; --back-w: 9px; --back-o: -5px; }
+  .seat { gap: 1px; }
 }
 </style>
 <div id="app"></div>

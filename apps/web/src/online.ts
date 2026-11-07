@@ -141,7 +141,9 @@ function flushFlights() {
     const r = srcCards[i].getBoundingClientRect();
     c.style.width = `${r.width}px`; c.style.height = `${r.height}px`;
     c.style.setProperty('--w', `${r.width}px`);
+    c.style.marginLeft = getComputedStyle(srcCards[i]).marginLeft; // 겹쳐 펼친 간격도 그대로
   });
+  clone.style.gap = '0';
   clone.className = 'pcards flyer';
   clone.style.left = `${d.left}px`; clone.style.top = `${d.top}px`; clone.style.width = `${d.width}px`;
   document.body.appendChild(clone);
@@ -325,10 +327,10 @@ function seatHtml(v: View, i: number, pos: string) {
   const n = s.cardCount ?? 0;
   const g = v.game!;
   const d = g.deadline && g.deadline.seat === i && g.activeSeat === i ? ring(g.deadline, 'sm') : '';
+  // 자리 칸은 크기가 고정돼 있어서, 표시가 붙었다 떨어져도 칸이 커지거나 작아지지 않는다
   return `<div class="seat ${pos}${i === v.me ? ' viewing' : ''}${g.activeSeat === i ? ' active' : ''}" data-seat="${i}">
     <span class="sname">${esc(s.nickname ?? '')}${d}</span>
-    <span class="seggs">${n}장</span>
-    <span class="backs">${Array.from({ length: Math.min(n, 12) }, () => '<span class="back"></span>').join('')}</span>
+    <span class="scount"><span class="backs" aria-hidden="true">${Array.from({ length: Math.min(n, 12) }, () => '<span class="back"></span>').join('')}</span><span class="seggs">${n}장</span></span>
     <span class="badges">${seatBadges(v, i)}</span>
   </div>`;
 }
@@ -337,27 +339,27 @@ function centerHtml(v: View) {
   const g = v.game!;
   const m = v.mine!;
   if (g.phase === 'run-declare') {
-    return `<div class="panel">${ring(g.deadline, 'md')}<p class="ptitle">달릴 사람 있나요?</p>
+    return `<div class="panel"><p class="ptitle">${ring(g.deadline, 'sm')}달릴 사람 있나요?</p>
       ${m.canRun ? `<p class="psub">불을 가졌어요. 달리면 배수 ×2, 불이 공개됩니다.</p><div class="prow"><button type="button" class="btn hot" data-act="declareRun">달리기</button></div>`
       : '<p class="psub">불을 가진 사람이 정하는 중이에요</p>'}</div>`;
   }
   if (g.phase === 'ddook-declare') {
-    return `<div class="panel">${ring(g.deadline, 'md')}<p class="ptitle">뚝?</p><p class="psub">${esc(nm(g.runnerSeat!))}가 달립니다. 반대편 한 명이 뚝을 외치면 배수 ×4.</p>
+    return `<div class="panel"><p class="ptitle">${ring(g.deadline, 'sm')}뚝?</p><p class="psub">${esc(nm(g.runnerSeat!))}가 달립니다. 반대편 한 명이 뚝을 외치면 배수 ×4.</p>
       ${m.canDdook ? '<div class="prow"><button type="button" class="btn hot" data-act="declareDdook">뚝</button></div>' : ''}</div>`;
   }
   if (!g.trick.length) {
     if (g.activeSeat !== null) return `<p class="pile-note"><b>${esc(nm(g.activeSeat))}</b> 선 · 아무 조합이나 낼 수 있어요</p>`;
     return '<p class="pile-note">&nbsp;</p>';
   }
-  const plays = g.trick.slice(-2); // 직전 카드(선명) + 그 앞 카드(흐리게)만
+  // 직전 카드(선명, 낸 사람 닉네임만) 위에 그 앞 카드(흐리게, 이름 없음)가 깔린 채 겹쳐 쌓인 모습
+  const plays = g.trick.slice(-2);
   const pile = plays.map((p, i) => {
     const last = i === plays.length - 1;
-    const name = p.via === 'blackpig' ? '흑돼지' : COMBO_NAME[p.kind as keyof typeof COMBO_NAME];
     const key = playKey(p.seat, p.cards);
     const incoming = last && flying && flying.key === key && Date.now() < flying.until;
-    return `<div class="play${last ? ' last' : ''}${last && p.via !== 'play' ? ' special' : ''}${incoming ? ' incoming' : ''}" data-key="${esc(key)}">
-      <div class="pcards">${p.cards.map((c) => cardHtml(c, { small: !last })).join('')}</div>
-      <span class="pby">${esc(nm(p.seat))} · ${name}${VIA[p.via] ? ' · ' + VIA[p.via] : ''}</span></div>`;
+    return `<div class="play ${last ? 'last' : 'prev'}${last && p.via !== 'play' ? ' special' : ''}${incoming ? ' incoming' : ''}" data-key="${esc(key)}" style="--n:${p.cards.length}">
+      <div class="pcards">${p.cards.map((c) => cardHtml(c)).join('')}</div>
+      ${last ? `<span class="pby">${esc(nm(p.seat))}</span>` : ''}</div>`;
   }).join('');
   let note = '';
   if (g.phase === 'reveal' && g.revealLeader !== null) note = `<p class="lead-note">${esc(nm(g.revealLeader))} 선</p>`;
