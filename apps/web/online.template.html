@@ -265,6 +265,10 @@ details.log:not([open]) > summary .eyebrow::after { content: " ▸"; }
 @keyframes giggle { from { transform: rotate(-5deg) translateY(0); } to { transform: rotate(5deg) translateY(-7px); } }
 @keyframes fade { 0%, 100% { opacity: 0; } 15%, 80% { opacity: 1; } }
 
+/* ── 날아가는 카드 ── */
+.flyer { position: fixed; z-index: 23; margin: 0; display: flex; flex-wrap: nowrap; justify-content: center; gap: 4px; pointer-events: none; will-change: transform; filter: drop-shadow(0 8px 10px rgba(20, 6, 32, .45)); }
+.play.incoming .pcards { visibility: hidden; }
+
 /* ── 통과 말풍선 ── */
 .passpop { position: absolute; z-index: 24; transform: translate(-50%, -70%) scale(.4); padding: 3px 14px; border-radius: 999px; background: var(--pink); color: var(--ink); border: 3px solid var(--ink); box-shadow: 0 4px 0 var(--ink); font: 400 clamp(20px, 5vw, 28px) var(--font-display); white-space: nowrap; pointer-events: none; animation: passpop 1s ease-out forwards; }
 @keyframes passpop { 0% { opacity: 0; transform: translate(-50%, -40%) scale(.4); } 22% { opacity: 1; transform: translate(-50%, -95%) scale(1.15) rotate(-5deg); } 40% { transform: translate(-50%, -90%) scale(1) rotate(-5deg); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -120%) scale(.95) rotate(-5deg); } }

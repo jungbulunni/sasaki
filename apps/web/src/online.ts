@@ -116,7 +116,49 @@ function logText(ev: any, v: View | null = view): string | null {
 }
 
 let pendingPops: number[] = [];
+// ───── 카드가 낸 사람 자리에서 가운데 더미로 날아가는 효과 ─────
+const FLY_MS = 380;
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let pendingFlights: { seat: number; key: string }[] = [];
+let flying: { key: string; until: number } | null = null;
+const playKey = (seat: number, cards: CardId[]) => `${seat}:${cards.join(',')}`;
+
+function flushFlights() {
+  const list = pendingFlights;
+  pendingFlights = [];
+  const f = list.at(-1); // 한 번에 여러 장이 왔으면 마지막 것만 날린다
+  if (!f || reduceMotion) return;
+  const dest = document.querySelector<HTMLElement>(`.play.last[data-key="${CSS.escape(f.key)}"] .pcards`);
+  const from = f.seat === view?.me ? document.querySelector<HTMLElement>('.hand') : document.querySelector<HTMLElement>(`.seat[data-seat="${f.seat}"]`);
+  if (!dest || !from) return;
+  const d = dest.getBoundingClientRect();
+  const s0 = from.getBoundingClientRect();
+  if (!d.width) return;
+  const clone = dest.cloneNode(true) as HTMLElement;
+  // 원래 카드 크기를 그대로 옮겨 적는다 (가운데 더미 밖에서도 같은 크기로 보이게)
+  const srcCards = dest.querySelectorAll<HTMLElement>('.card');
+  clone.querySelectorAll<HTMLElement>('.card').forEach((c, i) => {
+    const r = srcCards[i].getBoundingClientRect();
+    c.style.width = `${r.width}px`; c.style.height = `${r.height}px`;
+    c.style.setProperty('--w', `${r.width}px`);
+  });
+  clone.className = 'pcards flyer';
+  clone.style.left = `${d.left}px`; clone.style.top = `${d.top}px`; clone.style.width = `${d.width}px`;
+  document.body.appendChild(clone);
+  const dx = s0.left + s0.width / 2 - (d.left + d.width / 2);
+  const dy = s0.top + s0.height / 2 - (d.top + d.height / 2);
+  flying = { key: f.key, until: Date.now() + FLY_MS };
+  dest.closest('.play')?.classList.add('incoming');
+  const anim = clone.animate([
+    { transform: `translate(${dx}px, ${dy}px) scale(.55) rotate(-8deg)`, opacity: 0.6 },
+    { transform: 'translate(0, 0) scale(1.08) rotate(2deg)', opacity: 1, offset: 0.8 },
+    { transform: 'translate(0, 0) scale(1) rotate(0)', opacity: 1 },
+  ], { duration: FLY_MS, easing: 'cubic-bezier(.2,.7,.3,1)' });
+  anim.onfinish = anim.oncancel = () => { clone.remove(); flying = null; document.querySelectorAll('.play.incoming').forEach((e) => e.classList.remove('incoming')); };
+}
+
 function onEvent(ev: any, v: View) {
+  if (ev.type === 'played') pendingFlights.push({ seat: ev.seat, key: playKey(ev.seat, ev.cards) });
   if (ev.type === 'passed') { pendingPops.push(ev.seat); return; }
   if (ev.type === 'pig') return shout('돼지!', 'pig', 3000);
   if (ev.type === 'blackPig') return shout('흑돼지!', 'blackpig', 3000);
@@ -311,7 +353,9 @@ function centerHtml(v: View) {
   const pile = plays.map((p, i) => {
     const last = i === plays.length - 1;
     const name = p.via === 'blackpig' ? '흑돼지' : COMBO_NAME[p.kind as keyof typeof COMBO_NAME];
-    return `<div class="play${last ? ' last' : ''}${last && p.via !== 'play' ? ' special' : ''}">
+    const key = playKey(p.seat, p.cards);
+    const incoming = last && flying && flying.key === key && Date.now() < flying.until;
+    return `<div class="play${last ? ' last' : ''}${last && p.via !== 'play' ? ' special' : ''}${incoming ? ' incoming' : ''}" data-key="${esc(key)}">
       <div class="pcards">${p.cards.map((c) => cardHtml(c, { small: !last })).join('')}</div>
       <span class="pby">${esc(nm(p.seat))} · ${name}${VIA[p.via] ? ' · ' + VIA[p.via] : ''}</span></div>`;
   }).join('');
@@ -452,6 +496,7 @@ function render() {
   app.innerHTML = html + (toastMsg ? `<div class="toast" role="status">${esc(toastMsg)}</div>` : '');
   updateCountdown();
   flushPops();
+  flushFlights();
 }
 
 /** "통과" 말풍선: 그 사람 자리 위에서 한 번 커졌다가 사라짐 (불이야보다 작게) */
