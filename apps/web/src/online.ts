@@ -370,10 +370,10 @@ function centerHtml(v: View) {
 function statusOf(v: View): { text: string; canPlay: boolean; warn?: boolean } {
   const g = v.game!;
   const m = v.mine!;
-  if (m.window) return { text: m.window.type === 'kkotda' ? '꽂을지 정해 주세요' : '흑돼지로 막을지 정해 주세요', canPlay: false };
-  if (!m.myTurn) return { text: g.activeSeat !== null ? `${nm(g.activeSeat)}의 차례예요` : '', canPlay: false };
+  // 차례·안내 문구는 표시하지 않는다 (누구 차례인지는 게임판의 자리 색으로 보임). 고른 카드에 대한 판정만 보여준다.
+  if (m.window || !m.myTurn) return { text: '', canPlay: false };
   const cards = [...selected];
-  if (!cards.length) return { text: g.trick.length ? '카드를 고르거나 통과하세요' : '선입니다. 카드를 고르세요', canPlay: false };
+  if (!cards.length) return { text: '', canPlay: false };
   const c = classifyCombo(cards);
   if (!c) return { text: '허용되지 않는 조합', canPlay: false };
   const topP = g.trick.at(-1);
