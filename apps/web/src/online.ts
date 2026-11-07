@@ -326,10 +326,12 @@ function seatHtml(v: View, i: number, pos: string) {
   const s = v.seats[i];
   const n = s.cardCount ?? 0;
   const g = v.game!;
-  const d = g.deadline && g.deadline.seat === i && g.activeSeat === i ? ring(g.deadline, 'sm') : '';
+  // 남은 시간: 동그라미 대신 정사각형 테두리 전체가 타이머 (밝은 테두리가 반시계로 줄어들고, 색이 초록 → 노랑 → 빨강)
+  const dl = g.deadline && g.deadline.seat === i && g.activeSeat === i ? g.deadline : null;
+  const tstyle = dl ? ` style="--tdur:${dl.total}ms;--tdel:-${Math.round(Math.max(0, Math.min(dl.total, dl.total - (dl.at - now()))))}ms"` : '';
   // 자리 칸은 크기가 고정돼 있어서, 표시가 붙었다 떨어져도 칸이 커지거나 작아지지 않는다
-  return `<div class="seat ${pos}${i === v.me ? ' viewing' : ''}${g.activeSeat === i ? ' active' : ''}" data-seat="${i}">
-    <span class="sname"><span class="snm">${esc(s.nickname ?? '')}</span></span>${d ? `<span class="sring">${d}</span>` : ''}
+  return `<div class="seat ${pos}${i === v.me ? ' viewing' : ''}${g.activeSeat === i ? ' active' : ''}${dl ? ' timing' : ''}" data-seat="${i}"${tstyle}>
+    <span class="sname"><span class="snm">${esc(s.nickname ?? '')}</span></span>${dl ? '<span class="stimer" aria-hidden="true"></span>' : ''}
     <span class="scount"><span class="backs" aria-hidden="true">${Array.from({ length: Math.min(n, 12) }, () => '<span class="back"></span>').join('')}</span><span class="seggs">${n}장</span></span>
     <span class="badges">${seatBadges(v, i)}</span>
   </div>`;
@@ -422,7 +424,16 @@ function resultHtml(v: View) {
   const r = v.result;
   if (!r) return '';
   const T: Record<string, string> = { fire: '불팀', black: '흑팀', pig: '돼지' };
-  const title = { 'win-2v2': `${T[r.winnerTeam!]} 승리!`, 'pig-win': '돼지 1등!', 'pig-lose': '돼지 꼴찌!', water: '물판' }[r.kind];
+  // 제목과 돼지 그림은 '내' 입장에서: 내 팀이 이겼는지 졌는지
+  const mine = r.teams[v.me];
+  let title: string;
+  let face: string;
+  if (r.kind === 'water') { title = '물판'; face = pigFaceSvg('skypig', 'normal'); }
+  else {
+    const won = r.kind === 'win-2v2' ? r.winnerTeam === mine : (r.kind === 'pig-win') === (mine === 'pig');
+    title = `${T[mine]} ${won ? '승리' : '패배'}!`;
+    face = pigFaceSvg(mine === 'black' ? 'blackpig' : 'pig', won ? 'happy' : 'sad');
+  }
   const rows = r.ranks.map((seat, i) => {
     const d = r.deltas[seat];
     const undecided = r.earlyEnd && i >= r.decided;
@@ -452,9 +463,8 @@ function resultHtml(v: View) {
       <button type="button" class="btn line" id="shuffleBtn" ${r.shufflePending ? 'disabled' : ''}>${r.shufflePending ? '다음 판에 바뀜' : '자리 바꾸기'}</button></div>
       <button type="button" class="btn line leave" id="leaveBtn">${leaveArmed ? '정말 나갈까요? 한 번 더 누르면 나가요' : '나가기'}</button>`;
   }
-  const happy = r.kind !== 'water';
   return `<div class="overlay" role="dialog" aria-modal="true" aria-label="판 결과"><div class="sheet">
-    <div class="reshead"><div><p class="eyebrow">${v.game?.handNo ?? ''}판 결과</p><h2>${title}</h2></div>${pigFaceSvg('pig', happy ? 'happy' : 'normal')}</div>
+    <div class="reshead"><div><p class="eyebrow">${v.game?.handNo ?? ''}판 결과</p><h2>${title}</h2></div>${face}</div>
     <div class="restable"><div class="rrow head"><span>순위</span><span>이름</span><span>팀</span><span style="text-align:right">증감</span><span style="text-align:right">알</span></div>
       ${rows}<p class="resnote">${notes.join(' · ')}</p></div>
     <div class="resfoot">${foot}</div></div></div>`;

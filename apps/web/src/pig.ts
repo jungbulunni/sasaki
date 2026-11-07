@@ -1,24 +1,35 @@
 // 확정 디자인(2026-11-05)의 돼지 그림. 입은 그리지 않고 눈으로만 표정을 낸다.
 
-type Kind = 'pig' | 'blackpig';
-type Mood = 'normal' | 'happy';
+type Kind = 'pig' | 'blackpig' | 'skypig';
+/** normal: 동그란 눈 · happy: 웃는 반달눈 · sad: 우는 얼굴 (눈물 줄줄) */
+type Mood = 'normal' | 'happy' | 'sad';
 
 const PAL = {
   pig: { face: '#FCE6EB', line: '#2E1640', cheek: '#F7A3B5', snout: '#F49AB0', nost: '#B8455F', eye: '#2A1A2E', crown: '#F5C02A', band: '#E0A21C', pearl: '#FFF6D8', jewel: '#D2343E' },
+  // 물판용 하늘색 돼지
+  skypig: { face: '#DDF1FC', line: '#1F3550', cheek: '#A8D8F2', snout: '#A3D3EF', nost: '#3C76A0', eye: '#1F3550', crown: '#F5C02A', band: '#E0A21C', pearl: '#FFF6D8', jewel: '#3E7BD6' },
   blackpig: { face: '#5A5463', line: '#17141B', cheek: '#7E7689', snout: '#8A8296', nost: '#26222C', eye: '#F3EEF7', crown: '#C9C4D2', band: '#9E98A8', pearl: '#F3EEF7', jewel: '#17141B' },
 };
 
-/** 얼굴 (viewBox 0 0 200 186). 흑돼지는 늘 낄낄 웃는 반달눈 + 눈물 */
+/** 얼굴 (viewBox 0 0 200 186). 흑돼지는 (울 때 말고는) 늘 낄낄 웃는 반달눈 + 웃음 눈물 */
 export function pigHead(kind: Kind, mood: Mood = 'normal', sw = 4.5): string {
   const c = PAL[kind];
-  const happy = kind === 'blackpig' || mood === 'happy';
-  const eyes = happy
+  const sad = mood === 'sad';
+  const happy = !sad && (kind === 'blackpig' || mood === 'happy');
+  const eyes = sad
+    // 처진 눈썹 + 꼭 감은 눈 (아래로 둥근 선)
+    ? `<path d="M60 96 L82 89" fill="none" stroke="${c.eye}" stroke-width="5" stroke-linecap="round"/><path d="M140 96 L118 89" fill="none" stroke="${c.eye}" stroke-width="5" stroke-linecap="round"/>
+       <path d="M65 106 Q74 116 83 106" fill="none" stroke="${c.eye}" stroke-width="6" stroke-linecap="round"/><path d="M117 106 Q126 116 135 106" fill="none" stroke="${c.eye}" stroke-width="6" stroke-linecap="round"/>`
+    : happy
     ? `<path d="M65 112 Q74 100 83 112" fill="none" stroke="${c.eye}" stroke-width="6" stroke-linecap="round"/><path d="M117 112 Q126 100 135 112" fill="none" stroke="${c.eye}" stroke-width="6" stroke-linecap="round"/>`
     : `<circle cx="74" cy="108" r="7.5" fill="${c.eye}"/><circle cx="126" cy="108" r="7.5" fill="${c.eye}"/><circle cx="76.5" cy="105" r="2.8" fill="#fff"/><circle cx="128.5" cy="105" r="2.8" fill="#fff"/>`;
-  const tears = kind === 'blackpig'
+  const tears = sad
+    // 눈 아래로 흘러내리는 굵은 눈물
+    ? `<path d="M70 113 Q64 128 66 146 Q70 152 75 146 Q78 128 76 113 Z" fill="#8FD0F2" stroke="#4A9CCB" stroke-width="2"/><path d="M130 113 Q136 128 134 146 Q130 152 125 146 Q122 128 124 113 Z" fill="#8FD0F2" stroke="#4A9CCB" stroke-width="2"/>`
+    : kind === 'blackpig'
     ? `<path d="M62 117 Q58.5 123 62 126 Q65.5 123 62 117 Z" fill="#BFE3F5"/><path d="M138 117 Q134.5 123 138 126 Q141.5 123 138 117 Z" fill="#BFE3F5"/>`
     : '';
-  const gems = kind === 'pig' ? `<circle cx="90" cy="58" r="2.2" fill="#3E7BD6"/><circle cx="110" cy="58" r="2.2" fill="#2FA36B"/>` : '';
+  const gems = kind !== 'blackpig' ? `<circle cx="90" cy="58" r="2.2" fill="#3E7BD6"/><circle cx="110" cy="58" r="2.2" fill="#2FA36B"/>` : '';
   return `<ellipse cx="100" cy="112" rx="68" ry="60" fill="${c.face}" stroke="${c.line}" stroke-width="${sw}"/>
     <path d="M38 58 Q56 40 70 46 Q78 50 77 60 Q76 76 70 84 Q66 90 58 86 Q42 80 33 72 Q27 66 38 58 Z" fill="${c.face}" stroke="${c.line}" stroke-width="${sw}" stroke-linejoin="round"/>
     <path d="M162 58 Q144 40 130 46 Q122 50 123 60 Q124 76 130 84 Q134 90 142 86 Q158 80 167 72 Q173 66 162 58 Z" fill="${c.face}" stroke="${c.line}" stroke-width="${sw}" stroke-linejoin="round"/>
