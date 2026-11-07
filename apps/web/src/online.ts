@@ -267,7 +267,7 @@ function homeHtml() {
     <div class="titlebox"><h1 class="title">사사끼</h1></div>
     <form id="homeForm">
       <label class="field" for="nickIn">닉네임</label>
-      <input class="input" id="nickIn" maxlength="8" autocomplete="nickname" value="${esc(nickname)}" required>
+      <input class="input" id="nickIn" maxlength="5" autocomplete="nickname" value="${esc(nickname)}" required>
       ${code ? `<p class="invited">초대받은 방 <b>${esc(code)}</b></p>
         <button type="submit" class="btn primary" data-go="join">참가하기</button>`
       : `<button type="submit" class="btn primary" data-go="create">방 만들기</button>
@@ -329,7 +329,7 @@ function seatHtml(v: View, i: number, pos: string) {
   const d = g.deadline && g.deadline.seat === i && g.activeSeat === i ? ring(g.deadline, 'sm') : '';
   // 자리 칸은 크기가 고정돼 있어서, 표시가 붙었다 떨어져도 칸이 커지거나 작아지지 않는다
   return `<div class="seat ${pos}${i === v.me ? ' viewing' : ''}${g.activeSeat === i ? ' active' : ''}" data-seat="${i}">
-    <span class="sname">${esc(s.nickname ?? '')}${d}</span>
+    <span class="sname"><span class="snm">${esc(s.nickname ?? '')}</span></span>${d ? `<span class="sring">${d}</span>` : ''}
     <span class="scount"><span class="backs" aria-hidden="true">${Array.from({ length: Math.min(n, 12) }, () => '<span class="back"></span>').join('')}</span><span class="seggs">${n}장</span></span>
     <span class="badges">${seatBadges(v, i)}</span>
   </div>`;

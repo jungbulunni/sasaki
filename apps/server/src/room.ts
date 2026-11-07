@@ -106,7 +106,7 @@ export class Room {
       }
     }
     if (this.status !== 'lobby') return { ok: false, reason: '이미 시작한 게임입니다. 같은 브라우저에서만 다시 들어올 수 있어요.' };
-    const name = nickname.trim().slice(0, 8);
+    const name = [...nickname.trim()].slice(0, 5).join('');
     if (!name) return { ok: false, reason: '닉네임을 입력해 주세요' };
     if (this.seats.some((x) => x?.nickname === name)) return { ok: false, reason: '같은 닉네임이 이미 있어요' };
     const free = this.seats.findIndex((x) => x === null);

@@ -114,9 +114,9 @@ describe('AI', () => {
     expect(['chatda', 'pass']).toContain(d?.type);
   });
 
-  it('AI 이름은 모두 8자 이내, 서로 다름, 100개 이상', () => {
+  it('AI 이름은 모두 5자 이내, 서로 다름, 100개 이상', () => {
     expect(new Set(AI_NAMES).size).toBe(AI_NAMES.length);
-    expect(AI_NAMES.every((n) => n.length <= 8)).toBe(true);
+    expect(AI_NAMES.every((n) => n.length <= 5)).toBe(true);
     expect(AI_NAMES.length).toBeGreaterThanOrEqual(100);
   });
 
