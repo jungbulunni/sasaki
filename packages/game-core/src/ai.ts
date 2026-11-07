@@ -22,6 +22,8 @@ export interface AiView {
   options: { type: 'chatda' | 'mureugi'; cards: CardId[] }[];
   /** 불이 공개된 자리 (모두에게 보이는 정보) */
   revealedFire: number[];
+  /** 이미 판 위에 나왔다가 치워진 카드 (모두가 본 정보) */
+  discard: CardId[];
 }
 
 export function aiView(st: HandState, seat: number): AiView {
@@ -39,6 +41,7 @@ export function aiView(st: HandState, seat: number): AiView {
       : null,
     options: specialOptions(st, seat),
     revealedFire: [...st.revealedFire],
+    discard: [...st.discard],
   };
 }
 
@@ -76,33 +79,67 @@ function knownTeammate(v: AiView): number | null {
 
 const countRank = (hand: CardId[], r: number) => hand.filter((c) => rankOf(c) === r).length;
 
+/** 모두가 본 카드 (치워진 더미 + 지금 더미) */
+function seenCards(v: AiView): Set<CardId> {
+  return new Set([...v.discard, ...v.trick.flatMap((p) => p.combo.cards)]);
+}
+
 /**
- * 찼다(차기)를 할 가치가 있는지 — 아낄 이유가 있으면 확률적으로 아낀다.
+ * 찼다로 낸 숫자 r 의 '네 번째 카드'를 상대가 들고 있어서 꽂다를 당할 확률.
+ * 48장을 모두 나눠 주므로, 판 위에 안 나왔고 내 주패에도 없으면 반드시 다른 누군가가 들고 있다.
+ * 그 사람이 확실한 같은 편일 수 있으면 그만큼 위험이 줄어든다.
+ */
+function kkotRisk(v: AiView, r: number): number {
+  const seen = seenCards(v);
+  const fourthGone = ['S', 'H', 'D', 'C'].every((s) => seen.has(`${s}${r}`) || v.hand.includes(`${s}${r}`));
+  if (fourthGone) return 0;
+  const mate = knownTeammate(v);
+  const holders = [0, 1, 2, 3].filter((s) => s !== v.seat && v.counts[s] > 0);
+  const total = holders.reduce((a, s) => a + v.counts[s], 0);
+  if (!total) return 0;
+  const enemy = holders.filter((s) => s !== mate).reduce((a, s) => a + v.counts[s], 0);
+  return enemy / total;
+}
+
+/**
+ * 찼다(차기)를 할 가치가 있는지 — 아낄 이유가 있으면 아낀다.
  *  - 다 내거나 거의 다 내게 되면 무조건 찬다
+ *  - 낮은 페어는 찰수록 이득 (주패를 털고 선까지 잡음)
+ *  - K·A 같은 높은 페어는 나중에 판을 잡을 힘이므로 아낀다
+ *  - 네 번째 카드가 아직 안 나왔으면 꽂다를 당해 높은 페어를 날릴 수 있으므로 크게 아낀다
  *  - 같은 숫자 3·4장(틀·마대)을 깨게 되면 아낀다
  *  - 쌍카(연속 페어)의 일부면 아낀다
  *  - 확실한 같은 편이 낸 카드면 아낀다 (같은 편의 흐름을 끊지 않음)
- *  - A·K 페어는 강한 페어로 남겨두기도 한다
- *  - 상대가 곧 나갈 것 같으면 선을 잡으러 적극적으로 찬다
+ *  - 상대가 곧 나갈 것 같으면 선을 잡으러 적극적으로 찬다 (그래도 꽂다 위험은 따진다)
  */
 function chatdaWorth(v: AiView, opt: { cards: CardId[] }, danger: boolean): number {
   const left = v.hand.length - opt.cards.length;
-  if (left <= 2) return 1;
-  const top = v.trick.at(-1);
-  if (opt.cards.length > 2) return danger ? 0.95 : 0.8; // 쌍카 찼다
+  if (left === 0) return 1; // 찼다로 완주하면 꽂다와 상관없음
+  if (opt.cards.length > 2) return danger ? 0.95 : 0.8; // 쌍카 찼다 (꽂다는 한 사람이 남은 카드를 모두 가져야 해서 드묾)
   const r = rankOf(opt.cards[0]);
-  let p = 0.92;
+  const risk = kkotRisk(v, r);
+  if (left <= 2) return r >= 13 && risk > 0.5 && !danger ? 0.5 : 1;
+
+  let p = 0.95;
+  // 페어 자체의 가치: 높을수록 아낌
+  if (r >= 14) p *= 0.3;
+  else if (r === 13) p *= 0.4;
+  else if (r >= 11) p *= 0.7;
+  else if (r >= 9) p *= 0.88;
+  // 꽂다 위험: 높은 페어일수록 꽂다를 당하면 손해가 큼
+  const loss = r >= 13 ? 0.95 : r >= 11 ? 0.7 : r >= 9 ? 0.45 : 0.25;
+  p *= 1 - risk * loss;
+
   const n = countRank(v.hand, r);
   if (n === 4) p *= 0.15;
   else if (n === 3) p *= 0.3;
   if (countRank(v.hand, r - 1) >= 2 && countRank(v.hand, r + 1) >= 2) p *= 0.4;
   else if ((countRank(v.hand, r - 1) >= 2 && countRank(v.hand, r - 2) >= 2) || (countRank(v.hand, r + 1) >= 2 && countRank(v.hand, r + 2) >= 2)) p *= 0.5;
   const mate = knownTeammate(v);
-  const target = v.options.find((o) => o.type === 'mureugi') && opt === v.options.find((o) => o.type === 'mureugi')
-    ? v.trick.at(-2)?.seat : top?.seat;
+  const mu = v.options.find((o) => o.type === 'mureugi');
+  const target = mu && opt === mu ? v.trick.at(-2)?.seat : v.trick.at(-1)?.seat;
   if (mate !== null && target === mate) p *= 0.25;
-  if (r >= 13) p *= 0.75;
-  if (danger) p = Math.max(p, 0.85);
+  if (danger) p = Math.max(p, 0.85 * (1 - risk * (r >= 13 ? 0.6 : 0.3)));
   return p;
 }
 
@@ -117,7 +154,8 @@ function kkotdaWorth(v: AiView, danger: boolean): number {
     const r = rankOf(cards[0]);
     const has = (x: number) => countRank(v.hand, x) > 0;
     if ((has(r - 1) && has(r + 1)) || (has(r - 1) && has(r - 2)) || (has(r + 1) && has(r + 2))) p *= 0.5; // 닐리리 재료
-    if (r === 14) p *= 0.7;
+    if (r === 14) p *= 0.6;
+    else if (r === 13) p *= 0.8;
   }
   if (danger) p = Math.max(p, 0.85);
   return p;
@@ -163,13 +201,16 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
   if (!plays.length) return v.options.length && v.trick.length ? { type: 'pass', seat } : null;
 
   const endgame = v.hand.length <= 4;
+  // 확실한 같은 편이 이기고 있으면 굳이 덮지 않는다 (상대가 곧 나갈 때·막판 제외)
+  const mate = knownTeammate(v);
+  if (v.trick.length && mate !== null && v.trick.at(-1)!.seat === mate && !danger && !endgame && v.counts[mate] > 0) return { type: 'pass', seat };
   const weak = plays.filter((c) => !STRONG.includes(c.kind));
   const pool = weak.length ? weak : (danger || endgame ? plays : []);
   if (!pool.length) return v.trick.length ? { type: 'pass', seat } : { type: 'play', seat, cards: plays[0].cards };
 
   // 선: 낮은 숫자부터, 같은 높이면 많이 털어내는 쪽
   // 받아치기: 이길 수 있는 가장 약한 패
-  const score = (c: Combo) => c.top * 10 - c.cards.length * (v.trick.length ? 0 : 4) + (breaksPair(v.hand, c) ? 6 : 0);
+  const score = (c: Combo) => c.top * 10 - c.cards.length * (v.trick.length ? 0 : 4) + breakCost(v.hand, c);
   pool.sort((a, b) => score(a) - score(b));
   const pick = pool[0];
 
@@ -178,10 +219,22 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
   return { type: 'play', seat, cards: pick.cards };
 }
 
-/** 싱글로 내면 페어(찰 기회)가 깨지는지 */
-function breaksPair(hand: CardId[], c: Combo) {
-  if (c.kind !== 'single') return false;
-  return hand.filter((x) => rankOf(x) === c.top).length >= 2;
+/**
+ * 이 패를 내면 남은 주패의 좋은 모양이 깨지는 정도 (점수가 클수록 피함).
+ *  - 페어에서 한 장만 빼면 찰 기회가 사라짐
+ *  - 같은 숫자 3·4장(틀·마대)을 쪼개면 큰 손해
+ */
+function breakCost(hand: CardId[], c: Combo) {
+  let cost = 0;
+  const used = new Map<number, number>();
+  for (const x of c.cards) used.set(rankOf(x), (used.get(rankOf(x)) ?? 0) + 1);
+  for (const [r, u] of used) {
+    const n = countRank(hand, r);
+    if (u >= n) continue;
+    if (n >= 3) cost += n === 4 ? 60 : 35;
+    else if (n === 2 && u === 1) cost += 18;
+  }
+  return cost;
 }
 
 /** 사람처럼 보이는 반응 시간 (밀리초) */
@@ -196,5 +249,23 @@ export function aiDelay(a: HandAction, rng: Rng): number {
   }
 }
 
-/** 재치있는 AI 닉네임 (8자 이내) */
-export const AI_NAMES = ['눈치백단', '패스장인', '꽂고본다', '돼지사냥꾼', '타짜꿈나무', '찰까말까', '뚝심이', '알부자', '선잡이', '포커페이스', '무르지마', '불꽃손'];
+/** 재치있는 AI 닉네임 (8자 이내, 겹치지 않게 넉넉히) */
+export const AI_NAMES = [
+  '눈치백단', '패스장인', '꽂고본다', '돼지사냥꾼', '타짜꿈나무', '찰까말까', '뚝심이', '알부자',
+  '선잡이', '포커페이스', '무르지마', '불꽃손', '카드요정', '패를숨긴자', '셔플마스터', '에이스헌터',
+  '킹메이커', '퀸의미소', '잭팟각', '한판만더', '오늘은딴다', '손이운다', '눈빛으로말해', '침착한척',
+  '표정관리중', '속으로울어', '이판사판', '일단내고봄', '생각중입니다', '고민은배송만', '야무진손끝', '묵직한한방',
+  '쫄지마세요', '기세등등', '승부사기질', '느긋한고양이', '졸린판다', '수상한토끼', '낮잠자는곰', '배고픈다람쥐',
+  '겁없는병아리', '춤추는펭귄', '노래하는오리', '뒤뚱뒤뚱', '꼬마타짜', '막내에이스', '동네고수', '골목대장',
+  '알까기왕', '달걀한판', '황금알', '알뜰살뜰', '빈손으로시작', '계란말이', '반숙장인', '노른자위',
+  '흰자의반란', '분홍꿀꿀이', '왕관쓴돼지', '돼지저금통', '삼겹살소년', '꿀꿀선생', '꿀꿀무사', '흑돼지박사',
+  '불돼지주의', '돼지꿈꿨어', '쌍카요정', '틀깨기달인', '마대각', '사사끼장인', '닐리리맘보', '닐리리야',
+  '연속박수', '페어찬양', '싱글벙글', '둘이서한쌍', '찼다전문가', '꽂기선수', '꽂아드림', '안꽂아요',
+  '무르기금지', '무르면반칙', '통과의달인', '통과만세', '선은내꺼', '선빵필승', '뚝뚝떨어져', '달려라하니',
+  '달리기선수', '전력질주', '느림보거북', '마라톤각', '완주가목표', '꼴찌는싫어', '일등예약', '행운의네잎',
+  '럭키세븐', '칠칠맞아', '팔자좋은패', '구사일생', '십년감수', '오늘의운세', '대박기원', '쪽박방지',
+  '심장쫄깃', '손바닥땀', '긴장백배', '침묵의고수', '무표정장인', '미소천사', '장난꾸러기', '능청맞은',
+  '엉뚱발랄', '허세가득', '작전타임', '계산완료', '수읽기중', '머리굴리는중', '전략가', '한수앞',
+  '두수앞', '묘수풀이', '꼼수는없다', '정공법', '카드뒤집개', '밤샘한판', '새벽의고수', '월요병환자',
+  '금요일밤', '퇴근후한판', '점심내기', '커피내기', '라면내기', '떡볶이내기',
+];

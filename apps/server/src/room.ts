@@ -56,6 +56,9 @@ export function kstHour(now = Date.now()): number {
   return Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', hour: 'numeric', hourCycle: 'h23' }).format(new Date(now))) % 24;
 }
 
+/** 최근에 쓴 AI 이름 (서버 전체) — 반복을 줄이기 위해 */
+const recentAiNames: string[] = [];
+
 export class Room {
   seats: (SeatInfo | null)[] = [null, null, null, null];
   status: 'lobby' | 'playing' | 'ended' = 'lobby';
@@ -223,9 +226,13 @@ export class Room {
     if (seat !== this.host || this.status !== 'lobby') return '방장만 AI를 넣을 수 있어요';
     const free = this.seats.findIndex((x) => x === null);
     if (free < 0) return '빈 자리가 없어요';
+    // 같은 방에서 겹치지 않고, 최근에 다른 판·다른 방에서 쓴 이름도 되도록 피한다
     const used = new Set(this.seats.map((x) => x?.nickname));
-    const names = AI_NAMES.filter((n) => !used.has(n));
+    let names = AI_NAMES.filter((n) => !used.has(n) && !recentAiNames.includes(n));
+    if (!names.length) names = AI_NAMES.filter((n) => !used.has(n));
     const name = names[Math.floor(this.rng() * names.length)] ?? `AI${free + 1}`;
+    recentAiNames.push(name);
+    if (recentAiNames.length > 60) recentAiNames.shift();
     this.seats[free] = { nickname: name, tokenHash: '', connected: true, selection: [], recentActionIds: [], ai: true, pid: randomBytes(8).toString('hex') };
     this.broadcast();
     return null;

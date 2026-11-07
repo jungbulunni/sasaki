@@ -450,7 +450,7 @@ function resultHtml(v: View) {
       <div class="countdown" id="countdown"><span class="n"></span><span class="t"></span></div>
       <div class="bar"><button type="button" class="btn gold" id="readyBtn" ${imReady ? 'disabled' : ''}>${imReady ? '기다리는 중' : '다시 한 판 더'}</button>
       <button type="button" class="btn line" id="shuffleBtn" ${r.shufflePending ? 'disabled' : ''}>${r.shufflePending ? '다음 판에 바뀜' : '자리 바꾸기'}</button></div>
-      <button type="button" class="btn ghost leave" id="leaveBtn">${leaveArmed ? '정말 나갈까요? 한 번 더 누르면 나가요' : '나가기'}</button>`;
+      <button type="button" class="btn line leave" id="leaveBtn">${leaveArmed ? '정말 나갈까요? 한 번 더 누르면 나가요' : '나가기'}</button>`;
   }
   const happy = r.kind !== 'water';
   return `<div class="overlay" role="dialog" aria-modal="true" aria-label="판 결과"><div class="sheet">

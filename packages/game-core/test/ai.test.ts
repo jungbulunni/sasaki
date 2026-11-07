@@ -114,8 +114,48 @@ describe('AI', () => {
     expect(['chatda', 'pass']).toContain(d?.type);
   });
 
-  it('AI 이름은 모두 8자 이내, 서로 다름', () => {
+  it('AI 이름은 모두 8자 이내, 서로 다름, 100개 이상', () => {
     expect(new Set(AI_NAMES).size).toBe(AI_NAMES.length);
     expect(AI_NAMES.every((n) => n.length <= 8)).toBe(true);
+    expect(AI_NAMES.length).toBeGreaterThanOrEqual(100);
+  });
+
+  /** 0번이 숫자 r 싱글을 내고, 1번이 r 페어, 3번이 네 번째 r 카드를 가진 상황을 여러 번 만들어 찼다 비율을 잰다 */
+  function chatdaRate(r: number, fourthSeen: boolean) {
+    const rng = seededRng(r * 7 + (fourthSeen ? 1 : 0));
+    const pool = [3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14].filter((x) => Math.abs(x - r) > 2)
+      .flatMap((x) => ['S', 'H', 'D', 'C'].map((su) => `${su}${x}`));
+    let took = 0;
+    const N = 120;
+    for (let i = 0; i < N; i++) {
+      const p = [...pool].sort(() => rng() - 0.5);
+      const hands = [[`S${r}`, ...p.slice(0, 5)], [`H${r}`, `D${r}`, ...p.slice(5, 10)], p.slice(10, 15), [...p.slice(15, 20)]];
+      if (fourthSeen) hands[0].push(`C${r}`); else hands[3].push(`C${r}`);
+      let st = setup(hands);
+      if (fourthSeen) {
+        // 네 번째 카드를 먼저 한 바퀴 돌려 모두가 보게 한 뒤, 0번이 다시 선을 잡아 r 싱글
+        st = ok(st, play(0, `C${r}`));
+        for (const s of [1, 2, 3]) st = ok(st, { type: 'pass', seat: s });
+      }
+      st = ok(st, play(0, `S${r}`));
+      if (aiDecide(aiView(st, 1), seededRng(i))?.type === 'chatda') took++;
+    }
+    return took / N;
+  }
+
+  it('[전략] 네 번째 카드가 안 나왔으면 A·K 페어로 찼다 하지 않는다 (꽂다 당하면 손해)', () => {
+    expect(chatdaRate(14, false)).toBeLessThan(0.08);
+    expect(chatdaRate(13, false)).toBeLessThan(0.1);
+  });
+
+  it('[전략] 낮은 페어는 적극적으로 찬다', () => {
+    expect(chatdaRate(4, false)).toBeGreaterThan(0.55);
+    expect(chatdaRate(4, true)).toBeGreaterThan(0.85);
+  });
+
+  it('[전략] 네 번째 카드가 이미 나왔으면 높은 페어도 가끔 찬다', () => {
+    const rate = chatdaRate(14, true);
+    expect(rate).toBeGreaterThan(0.12);
+    expect(rate).toBeLessThan(0.5);
   });
 });

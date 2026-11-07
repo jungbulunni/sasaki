@@ -474,6 +474,12 @@ details.log:not([open]) > summary .eyebrow::after { content: " ▸"; }
   .felt { --sq: 70px; --pile-h: 120px; --cw: 32px; --back-w: 9px; --back-o: -6px; }
   .seat .backs { display: none; }
 }
+
+/* ── 자리 칸 내용을 정사각형 한가운데로 · 결과 화면 나가기 버튼 보이게 (2026-11-07) ── */
+.seat, .seat.top, .seat.bottom, .seat.left, .seat.right { grid-template-rows: auto auto auto; align-content: center; justify-content: center; }
+.badges, .seat.top .badges, .seat.bottom .badges { justify-content: center; align-self: center; }
+.resfoot .leave { width: 100%; color: var(--cream); border-color: var(--cream); background: rgba(255, 255, 255, .06); font-size: 18px; }
+.resfoot .leave:active { transform: translateY(2px); }
 </style>
 <div id="app"></div>
 <div id="shout" aria-live="polite"></div>
