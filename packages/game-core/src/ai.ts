@@ -1,8 +1,8 @@
-// AI 플레이어 — "적당히 하는 사람" 수준.
+// AI 플레이어 — "적당히 하는 사람" 수준 + 팀플레이.
 // 원칙: 자기 주패와 모두가 볼 수 있는 정보(판 위 카드, 남은 장수, 공개된 불)만 사용한다.
 // 다른 사람의 주패는 절대 읽지 않는다 (aiView 로 걸러낸 정보만 판단에 씀).
 
-import { CardId, rankOf, Rng } from './cards';
+import { CardId, isFire, rankOf, Rng } from './cards';
 import { canBeat, Combo, ComboKind, enumerateCombos } from './combos';
 import { HandAction, HandState, NO_FINISH_KINDS, Play, specialOptions, teamOf } from './hand';
 
@@ -24,6 +24,10 @@ export interface AiView {
   revealedFire: number[];
   /** 이미 판 위에 나왔다가 치워진 카드 (모두가 본 정보) */
   discard: CardId[];
+  /** 모두가 알게 된 돼지 자리 (불돼지를 냈거나, 돼지가 달려서 불 두 장을 보였거나, 불 두 장을 모두 낸 사람) */
+  pigSeat: number | null;
+  /** 이미 완주한 자리 */
+  finished: number[];
 }
 
 export function aiView(st: HandState, seat: number): AiView {
@@ -42,7 +46,17 @@ export function aiView(st: HandState, seat: number): AiView {
     options: specialOptions(st, seat),
     revealedFire: [...st.revealedFire],
     discard: [...st.discard],
+    pigSeat: publicPig(st),
+    finished: [...st.finished, ...(st.provisional !== null ? [st.provisional] : [])],
   };
+}
+
+function publicPig(st: HandState): number | null {
+  if (st.teamMode !== 'pig-1v3') return null;
+  const pig = st.fireOwners[0];
+  if (!st.revealedFire.includes(pig)) return null;
+  // 달리기로 두 장을 다 보였거나, 손에 불이 하나도 안 남았으면(두 장 다 냄) 모두가 안다
+  return st.runner === pig || !st.hands[pig].some(isFire) ? pig : null;
 }
 
 /** 주패 힘 점수: 달리기·뚝 판단용 */
@@ -68,13 +82,70 @@ function stableRoll(key: string): number {
   return (h >>> 0) / 4294967296;
 }
 
-/** 공개 정보만으로 확실히 알 수 있는 같은 편 (2대2) */
+/**
+ * 자리마다 '나와 같은 편일 확률' (공개 정보 + 내 주패만으로 계산).
+ *  - 내가 불 두 장(돼지) → 모두 상대
+ *  - 내가 불 한 장 → 다른 불 주인이 같은 편. 공개되면 확실, 아니면 나머지 셋 중 하나
+ *  - 내가 불이 없음 → 불이 없는 다른 사람이 같은 편 (돼지 판이면 돼지 빼고 모두 같은 편)
+ */
+export function mateProbs(v: AiView): number[] {
+  const p = [0, 0, 0, 0];
+  const others = [0, 1, 2, 3].filter((s) => s !== v.seat);
+  const myFire = v.hand.filter(isFire).length;
+  if (myFire === 2) return p;
+  if (v.pigSeat !== null) { // 돼지가 공개됨 → 나는 흑팀, 돼지 빼고 모두 같은 편
+    for (const s of others) p[s] = s === v.pigSeat ? 0 : 1;
+    return p;
+  }
+  const shown = v.revealedFire.filter((s) => s !== v.seat);
+  if (myFire === 1) {
+    if (shown.length) { p[shown[0]] = 1; return p; }
+    for (const s of others) p[s] = 1 / 3;
+    return p;
+  }
+  // 나는 불이 없음
+  if (shown.length >= 2) { for (const s of others) p[s] = shown.includes(s) ? 0 : 1; return p; }
+  if (shown.length === 1) {
+    // 공개된 사람은 상대. 나머지 둘은 반반 (그 사람이 돼지면 둘 다 같은 편이라 조금 더 높게)
+    for (const s of others) p[s] = s === shown[0] ? 0 : 0.6;
+    return p;
+  }
+  for (const s of others) p[s] = 0.4;
+  return p;
+}
+
+/** 확실한 같은 편 (2대2에서 한 명, 돼지 판 흑팀이면 여럿일 수 있어 첫 번째) */
 function knownTeammate(v: AiView): number | null {
-  const myFire = v.hand.some((c) => c === 'H10' || c === 'D10');
-  const others = v.revealedFire.filter((s) => s !== v.seat);
-  if (myFire && others.length === 1 && !(v.hand.includes('H10') && v.hand.includes('D10'))) return others[0];
-  if (!myFire && others.length === 2) return [0, 1, 2, 3].find((s) => s !== v.seat && !others.includes(s)) ?? null;
-  return null;
+  const p = mateProbs(v);
+  const live = [0, 1, 2, 3].filter((s) => p[s] >= 0.99);
+  return live.length ? live.find((s) => v.counts[s] > 0) ?? live[0] : null;
+}
+
+/** 상대가 곧 나갈 것 같은지 (같은 편일 확률이 높은 사람은 빼고 본다) */
+function opponentDanger(v: AiView, probs: number[]): boolean {
+  return [0, 1, 2, 3].some((s) => s !== v.seat && v.counts[s] > 0 && v.counts[s] <= 2 && probs[s] < 0.5);
+}
+
+/** 아직 아무도 못 본 카드 (내 주패도 제외) — 다른 세 사람 손에 나뉘어 있음 */
+function unseenCards(v: AiView): CardId[] {
+  const seen = seenCards(v);
+  const all: CardId[] = [];
+  for (const su of ['S', 'H', 'D', 'C']) for (let r = 3; r <= 14; r++) all.push(`${su}${r}`);
+  return all.filter((c) => !seen.has(c) && !v.hand.includes(c));
+}
+
+/**
+ * 같은 편이 싱글 r 보다 높은 카드를 한 장이라도 들고 있을 확률.
+ * 안 나온 카드가 무작위로 나뉘어 있다고 보고 계산 (초기하분포).
+ */
+export function mateBeatsSingle(v: AiView, mate: number, r: number): number {
+  const unseen = unseenCards(v);
+  const U = unseen.length, m = Math.min(v.counts[mate], U);
+  const H = unseen.filter((c) => rankOf(c) > r).length;
+  if (m <= 0) return 0;
+  let none = 1; // 높은 카드가 하나도 없을 확률 = C(U-H, m) / C(U, m)
+  for (let i = 0; i < m; i++) none *= Math.max(0, U - H - i) / (U - i);
+  return 1 - none;
 }
 
 const countRank = (hand: CardId[], r: number) => hand.filter((c) => rankOf(c) === r).length;
@@ -138,8 +209,12 @@ function chatdaWorth(v: AiView, opt: { cards: CardId[] }, danger: boolean): numb
   const mate = knownTeammate(v);
   const mu = v.options.find((o) => o.type === 'mureugi');
   const target = mu && opt === mu ? v.trick.at(-2)?.seat : v.trick.at(-1)?.seat;
-  if (mate !== null && target === mate) p *= 0.25;
+  // 같은 편일 것 같은 사람(50% 이상)이 낸 카드는 덜 찬다
+  const probs = mateProbs(v);
+  if (target !== undefined && probs[target] >= 0.5 && probs[target] < 0.99) p *= 1 - probs[target] * 0.6;
   if (danger) p = Math.max(p, 0.85 * (1 - risk * (r >= 13 ? 0.6 : 0.3)));
+  // 확실한 같은 편이 낸 카드는 차지 않는다 (같은 편의 선을 뺏는 셈)
+  if (mate !== null && target === mate) p *= 0.05;
   return p;
 }
 
@@ -149,7 +224,7 @@ function kkotdaWorth(v: AiView, danger: boolean): number {
   if (v.hand.length - cards.length <= 1) return 1;
   let p = 0.9;
   const mate = knownTeammate(v);
-  if (mate !== null && v.window!.baseSeat === mate) p *= 0.25; // 같은 편이 이미 선을 잡음
+  if (mate !== null && v.window!.baseSeat === mate) p *= 0.05; // 같은 편이 이미 선을 잡음 → 뺏지 않음
   if (cards.length === 1) {
     const r = rankOf(cards[0]);
     const has = (x: number) => countRank(v.hand, x) > 0;
@@ -180,8 +255,8 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
     if (v.canDdook && handStrength(v.hand) >= 10 && rng() < 0.6) return { type: 'declareDdook', seat };
     return null;
   }
-  const others = v.counts.filter((_, i) => i !== seat && v.counts[i] > 0);
-  const danger = others.some((n) => n <= 2); // 누가 곧 나갈 것 같으면 강하게
+  const probs = mateProbs(v);
+  const danger = opponentDanger(v, probs); // 상대가 곧 나갈 것 같으면 강하게
   const situation = `${seat}|${v.hand.slice().sort().join('')}|${v.trick.map((p) => p.combo.cards.join('')).join('/')}`;
 
   if (v.window?.type === 'kkotda') {
@@ -200,12 +275,54 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
   // 낼 패가 없을 때: 찰 수 있지만 아끼기로 했으면 직접 패스 (아니면 서버의 2초 자동 패스)
   if (!plays.length) return v.options.length && v.trick.length ? { type: 'pass', seat } : null;
 
-  const endgame = v.hand.length <= 4;
-  // 확실한 같은 편이 이기고 있으면 굳이 덮지 않는다 (상대가 곧 나갈 때·막판 제외)
+  // 이걸로 다 내고 완주할 수 있으면 무조건 (팀에도 가장 좋음)
+  const out = plays.find((c) => c.cards.length === v.hand.length);
+  if (out) return { type: 'play', seat, cards: out.cards };
+
   const mate = knownTeammate(v);
-  if (v.trick.length && mate !== null && v.trick.at(-1)!.seat === mate && !danger && !endgame && v.counts[mate] > 0) return { type: 'pass', seat };
+  const mateLive = mate !== null && v.counts[mate] > 0;
+  const mateDone = mate !== null && v.finished.includes(mate); // 같은 편이 이미 나감 → 나도 빨리 나가야 함
+  const mateNearOut = mateLive && v.counts[mate!] <= 2;
+  const endgame = v.hand.length <= 4 || mateDone;
+  const top = v.trick.at(-1);
+
+  if (top) {
+    const by = top.seat;
+    // ① 같은 편이 낸 패 위에는 공격 카드(틀·사사끼·마대·불돼지)를 쓰지 않는다 — 같은 편의 공격을 낭비하는 셈.
+    //    같은 편 패 위에 보통 패를 덮는 건 오히려 상대가 받기 어렵게 막아 주는 효과가 있어서 그대로 둔다
+    //    (시뮬레이션으로 확인: 같은 편 위를 무조건 통과하면 팀 성적이 떨어짐).
+    const byLikelyMate = probs[by] >= 0.99 || (probs[by] >= 0.5 && stableRoll(`m|${situation}`) < probs[by]);
+    if (byLikelyMate && v.counts[by] > 0 && !danger) {
+      const normal = plays.filter((c) => !STRONG.includes(c.kind));
+      if (!normal.length) return { type: 'pass', seat };
+      plays.splice(0, plays.length, ...normal);
+    }
+  }
+
+  // ⑤ 내가 선이고 상대 중 누가 1장만 남았으면, 한 장으로는 받을 수 없는 페어·닐리리 등으로 시작한다
+  //    (2장 남은 상대에게 싱글로 시작하는 것도 시험했지만 오히려 손해라 넣지 않음)
+  if (!top) {
+    const oppWith = (n: number) => [0, 1, 2, 3].some((s2) => s2 !== seat && v.counts[s2] === n && probs[s2] < 0.5);
+    if (oppWith(1)) {
+      const multi = plays.filter((c) => c.cards.length >= 2 && !STRONG.includes(c.kind)).sort((a, b) => a.top - b.top || b.cards.length - a.cards.length);
+      if (multi.length) return { type: 'play', seat, cards: multi[0].cards };
+    }
+  }
+
+  // ④ 내가 선이고 같은 편이 곧 나갈 것 같으면 받기 쉬운 낮은 카드를 내 준다 (상대가 급하지 않을 때)
+  if (!top && mateNearOut && !danger) {
+    const singles = plays.filter((c) => c.kind === 'single').sort((a, b) => a.top - b.top);
+    const pairs = plays.filter((c) => c.kind === 'pair').sort((a, b) => a.top - b.top);
+    const feed = v.counts[mate!] === 2 && pairs.length && pairs[0].top <= 9 ? pairs[0] : singles[0];
+    if (feed) return { type: 'play', seat, cards: feed.cards };
+  }
+
+  // 상대가 같은 편을 막고 있고 같은 편이 곧 나갈 것 같으면, 선을 되찾으려고 강한 패도 쓴다
+  // 같은 편이 직접 넘길 수 있을 것 같으면(남은 카드 계산) 굳이 강한 패를 쓰지 않는다
+  const mateCanHandle = !!top && mateLive && top.combo.kind === 'single' && mateBeatsSingle(v, mate!, top.combo.top) >= 0.8;
+  const rescue = !!top && mateNearOut && probs[top.seat] < 0.5 && !mateCanHandle;
   const weak = plays.filter((c) => !STRONG.includes(c.kind));
-  const pool = weak.length ? weak : (danger || endgame ? plays : []);
+  const pool = weak.length && !(rescue && weak.every((c) => c.top < 12)) ? weak : (danger || endgame || rescue ? plays : []);
   if (!pool.length) return v.trick.length ? { type: 'pass', seat } : { type: 'play', seat, cards: plays[0].cards };
 
   // 선: 낮은 숫자부터, 같은 높이면 많이 털어내는 쪽
@@ -215,7 +332,7 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
   const pick = pool[0];
 
   // 받아치는데 A·K 같은 높은 패를 초반에 쓰게 되면 가끔 아낀다
-  if (v.trick.length && !danger && !endgame && pick.top >= 13 && rng() < 0.45) return { type: 'pass', seat };
+  if (v.trick.length && !danger && !endgame && !rescue && pick.top >= 13 && rng() < 0.45) return { type: 'pass', seat };
   return { type: 'play', seat, cards: pick.cards };
 }
 

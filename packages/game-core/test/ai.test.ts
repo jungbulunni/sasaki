@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { seededRng } from '../src/cards';
-import { aiDecide, aiView, AI_NAMES } from '../src/ai';
+import { aiDecide, aiView, AI_NAMES, mateBeatsSingle, mateProbs } from '../src/ai';
 import { applyHandAction, HandAction, HandState, hasNoPlay } from '../src/hand';
 import { createMatch, finishHand, startHand } from '../src/match';
 import { ok, play, setup } from './helpers';
@@ -157,5 +157,60 @@ describe('AI', () => {
     const rate = chatdaRate(14, true);
     expect(rate).toBeGreaterThan(0.12);
     expect(rate).toBeLessThan(0.5);
+  });
+
+  describe('[팀플레이 11-10]', () => {
+    // 0번 H10, 2번 D10 → 0·2번이 불팀. 불 두 장이 모두 공개되면 누구나 팀을 안다
+    const reveal = (st: HandState) => { st.revealedFire.push(0, 2); return st; };
+
+    it('같은 편 확률: 불이 공개되면 확실, 아니면 추정', () => {
+      const st = setup([['H10', 'S3'], ['S4', 'S5'], ['D10', 'S6'], ['S7', 'S8']]);
+      // setup 도우미는 1번에 D10을 주므로 직접 맞춘다
+      st.hands = [['H10', 'S3', 'S9'], ['S4', 'S5', 'S11'], ['D10', 'S6', 'S12'], ['S7', 'S8', 'S13']];
+      st.fireOwners = [0, 2];
+      expect(mateProbs(aiView(st, 0))).toEqual([0, 1 / 3, 1 / 3, 1 / 3]); // 불 한 장, 아직 아무도 공개 안 됨
+      expect(mateProbs(aiView(st, 1))).toEqual([0.4, 0, 0.4, 0.4]);       // 불 없음
+      reveal(st);
+      expect(mateProbs(aiView(st, 0))).toEqual([0, 0, 1, 0]);
+      expect(mateProbs(aiView(st, 1))).toEqual([0, 0, 0, 1]);
+    });
+
+    it('같은 편이 낸 패 위에 틀을 쓰지 않는다 (공격 카드 낭비 방지)', () => {
+      // 1·3번이 불팀(공개됨). 같은 편 1번이 K를 냈고, 3번은 주패 4장(막판)이라 예전 같으면 777 틀로 덮었을 상황
+      let st = setup([['S3'], ['S4'], ['S5'], ['S6']]);
+      st.hands = [['S3', 'S4', 'S5', 'S6', 'C3'], ['H10', 'S13', 'C4', 'C5', 'C6'], ['D3', 'D4', 'D5', 'D6', 'C8'], ['D10', 'S7', 'H7', 'D7']];
+      st.fireOwners = [1, 3]; st.revealedFire = [1, 3];
+      st.activeSeat = 1; st.leaderSeat = 1;
+      st = ok(st, play(1, 'S13'));
+      st = ok(st, { type: 'pass', seat: 2 });
+      expect(st.activeSeat).toBe(3);
+      for (let i = 1; i <= 20; i++) expect(aiDecide(aiView(st, 3), seededRng(i))).toEqual({ type: 'pass', seat: 3 });
+    });
+
+    it('상대가 1장 남았으면 선일 때 페어부터 낸다', () => {
+      const st = setup([['S3'], ['S4'], ['S5'], ['S6']]);
+      st.hands = [['S3', 'S5', 'H5', 'S9', 'S11'], ['C12'], ['H10', 'D3', 'D4', 'D6'], ['D10', 'C3', 'C4', 'C6']];
+      st.fireOwners = [2, 3]; st.revealedFire = [2, 3]; // 0·1번이 흑팀 → 1번은 같은 편, 상대는 2·3번
+      st.hands[1] = ['C12', 'C13']; st.hands[2] = ['H10'];  // 상대 2번이 1장
+      st.activeSeat = 0; st.leaderSeat = 0;
+      const d = aiDecide(aiView(st, 0), seededRng(1));
+      expect(d).toEqual(play(0, 'S5', 'H5'));
+    });
+
+    it('같은 편이 1장 남았으면 선일 때 가장 낮은 싱글을 내 준다', () => {
+      const st = setup([['S3'], ['S4'], ['S5'], ['S6']]);
+      st.hands = [['S4', 'S9', 'H9', 'S12', 'S13'], ['H10', 'C5', 'C6', 'C7', 'C8'], ['C11'], ['D10', 'D3', 'D5', 'D6', 'D7']];
+      st.fireOwners = [1, 3]; st.revealedFire = [1, 3]; // 0·2번이 흑팀
+      st.activeSeat = 0; st.leaderSeat = 0;
+      expect(aiDecide(aiView(st, 0), seededRng(1))).toEqual(play(0, 'S4'));
+    });
+
+    it('남은 카드 계산: 같은 편이 싱글을 넘길 확률', () => {
+      const st = setup([['S3'], ['S4'], ['S5'], ['S6']]);
+      st.hands = [['S3', 'S4'], ['S5'], ['S6', 'S7'], ['S8']];
+      const v = aiView(st, 0);
+      expect(mateBeatsSingle(v, 2, 14)).toBe(0);           // A보다 높은 카드는 없음
+      expect(mateBeatsSingle(v, 2, 3)).toBeGreaterThan(0.95); // 3보다 높은 카드는 거의 확실히 있음
+    });
   });
 });
