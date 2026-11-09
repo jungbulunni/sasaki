@@ -56,6 +56,7 @@ socket.on('view', (v: View) => {
   const first = lastLogN < 0;
   if (first) lastLogN = v.log.at(-1)?.n ?? 0;
   else for (const l of v.log) if (l.n > lastLogN) { onEvent(l.ev, v); lastLogN = l.n; }
+  stateSounds(view, v);
   view = v;
   if (v.mine) for (const c of [...selected]) if (!v.mine.hand.includes(c)) selected.delete(c);
   render();
@@ -159,7 +160,71 @@ function flushFlights() {
   anim.onfinish = anim.oncancel = () => { clone.remove(); flying = null; document.querySelectorAll('.play.incoming').forEach((e) => e.classList.remove('incoming')); };
 }
 
+// 기록에 새로 올라온 일마다 나는 소리
+const COMBO_VOICE: Record<string, SoundName> = { teul: 'voice-06-1-tteul', madae: 'voice-06-2-madae', ssangka: 'voice-06-3-ssangka', sasaki: 'voice-06-4-sasaki' };
+let dealUntil = 0; // 카드 나눠주는 소리가 끝나는 시각 ('달릴 사람 있나요?'를 그 뒤로)
+function eventSound(ev: any) {
+  switch (ev.type) {
+    case 'handStart': {
+      const first = ev.handNo === 1;
+      if (first) play('sfx-01-start');
+      play('sfx-02-deal', first ? 1300 : 0, 2000);
+      dealUntil = Date.now() + (first ? 3400 : 2100);
+      soundCursor = dealUntil;
+      return;
+    }
+    case 'played': {
+      play('sfx-05-play-card');
+      if (ev.via === 'chatda' || ev.via === 'mureugi') return queue('voice-10-chatda');
+      if (ev.via === 'kkotda') return queue('voice-11-kkotda');
+      if (ev.via === 'blackpig') return; // 흑돼지 웃음은 blackPig에서
+      const c = classifyCombo(ev.cards);
+      if (c && COMBO_VOICE[c.kind]) queue(COMBO_VOICE[c.kind]);
+      return;
+    }
+    case 'passed': return queue('voice-07-pass');
+    case 'fireAlarm': return queue('voice-15-buriya');
+    case 'pig': return queue('sfx-13-pig');
+    case 'blackPig': return queue('sfx-14-black-pig');
+    case 'noKkot': return queue('voice-12-an-kkoja');
+    case 'finished': return queue('sfx-19-finish');
+    case 'run': return queue('voice-17-run');
+    case 'ddook': return queue('voice-18-ttuk');
+    case 'trickCleared': return queue('sfx-09-clear-pile');
+    case 'leftGame': return queue('sfx-26-join-leave');
+  }
+}
+
+// 이전 화면 정보와 비교해서 나는 소리 (내 차례 · 달릴 사람? · 결과 · 대기실 입장/퇴장)
+function stateSounds(prev: View | null, v: View) {
+  if (!prev || prev.code !== v.code) return;
+  const people = (x: View) => x.seats.filter((s) => s.nickname).length;
+  if (v.status === 'lobby' && prev.status === 'lobby' && people(v) !== people(prev)) play('sfx-26-join-leave');
+
+  const d = v.game?.deadline, pd = prev.game?.deadline;
+  const myTurn = d && d.kind === 'turn' && d.seat === v.me;
+  const wasMyTurn = pd && pd.kind === 'turn' && pd.seat === prev.me && pd.at === d?.at;
+  if (myTurn && !wasMyTurn) queue('sfx-03-my-turn', 0);
+
+  if (d?.kind === 'run' && !(pd?.kind === 'run' && pd.at === d.at)) {
+    const wait = Math.max(0, dealUntil - Date.now());
+    play('voice-16-run-ask', wait);
+    soundCursor = Date.now() + wait + 1900;
+  }
+
+  const r = v.result;
+  if (r && !prev.result) {
+    const mine = r.teams[v.me];
+    const won = r.kind === 'win-2v2' ? r.winnerTeam === mine : (r.kind === 'pig-win') === (mine === 'pig');
+    const main: SoundName = r.kind === 'water' ? 'sfx-22-draw' : won ? 'sfx-20-win' : 'sfx-21-lose';
+    play(main, 300);
+    // 다음 판이 누군가의 배려판이거나 탈락자가 생겼으면, 이어서 아슬아슬한 소리
+    if (r.nextCare !== null || r.eliminated.length) play('sfx-23-care-out', 300 + (buffers.get(main)?.duration ?? 2) * 1000 + 200);
+  }
+}
+
 function onEvent(ev: any, v: View) {
+  eventSound(ev);
   if (ev.type === 'played') pendingFlights.push({ seat: ev.seat, key: playKey(ev.seat, ev.cards) });
   if (ev.type === 'passed') { pendingPops.push(ev.seat); return; }
   if (ev.type === 'pig') return shout('돼지!', 'pig', 3000);
@@ -193,40 +258,87 @@ function toast(m: string) {
 // ───── 소리 ─────
 let soundOn = store.get('sasaki-sound') !== 'off';
 let audio: AudioContext | null = null;
+// 말소리·효과음 파일 (apps/web/sounds). 번호는 '사사끼 효과음 목록' 문서의 번호.
+const SOUNDS = [
+  'sfx-01-start', 'sfx-02-deal', 'sfx-03-my-turn', 'sfx-04-time-warn', 'sfx-05-play-card', 'sfx-08-no-play', 'sfx-09-clear-pile',
+  'sfx-13-pig', 'sfx-14-black-pig', 'sfx-19-finish', 'sfx-20-win', 'sfx-21-lose', 'sfx-22-draw', 'sfx-23-care-out',
+  'sfx-24-countdown', 'sfx-25-button', 'sfx-26-join-leave',
+  'voice-06-1-tteul', 'voice-06-2-madae', 'voice-06-3-ssangka', 'voice-06-4-sasaki', 'voice-07-pass', 'voice-10-chatda',
+  'voice-11-kkotda', 'voice-12-an-kkoja', 'voice-15-buriya', 'voice-16-run-ask', 'voice-17-run', 'voice-18-ttuk',
+] as const;
+type SoundName = (typeof SOUNDS)[number];
+const buffers = new Map<SoundName, AudioBuffer>();
+let soundsRequested = false;
 function ensureAudio() {
   if (!soundOn) return;
   try {
     audio ??= new (window.AudioContext || (window as any).webkitAudioContext)();
     if (audio!.state === 'suspended') void audio!.resume();
   } catch { audio = null; }
+  if (audio && !soundsRequested) {
+    soundsRequested = true;
+    const ctx = audio;
+    for (const name of SOUNDS) {
+      fetch(`/sounds/${name}.mp3`)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject()))
+        .then((ab) => new Promise<AudioBuffer>((res, rej) => ctx.decodeAudioData(ab, res, rej)))
+        .then((buf) => buffers.set(name, buf))
+        .catch(() => { /* 소리 하나가 안 와도 게임은 그대로 */ });
+    }
+  }
 }
-function tick(high: boolean) {
+/** 소리 하나 재생. delayMs 뒤에 나고, maxMs가 있으면 그때까지만 (끝을 살짝 줄여서), fromMs면 소리 중간부터 */
+function play(name: SoundName, delayMs = 0, maxMs = 0, fromMs = 0) {
   if (!soundOn || !audio) return;
-  const t = audio.currentTime;
-  const o = audio.createOscillator();
+  const buf = buffers.get(name);
+  if (!buf) return;
+  const t = audio.currentTime + Math.max(0, delayMs) / 1000;
+  const src = audio.createBufferSource();
   const g = audio.createGain();
-  o.type = 'square';
-  o.frequency.setValueAtTime(high ? 1900 : 1300, t);
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.18, t + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
-  o.connect(g).connect(audio.destination);
-  o.start(t); o.stop(t + 0.06);
+  src.buffer = buf;
+  g.gain.value = 0.85;
+  src.connect(g).connect(audio.destination);
+  src.start(t, fromMs / 1000);
+  if (maxMs > 0 && maxMs / 1000 < buf.duration) {
+    const end = t + maxMs / 1000;
+    g.gain.setValueAtTime(0.85, Math.max(t, end - 0.15));
+    g.gain.linearRampToValueAtTime(0.0001, end);
+    src.stop(end + 0.02);
+  }
 }
-let tickKey = '';
-let tickTimers: number[] = [];
+/** 같은 이벤트에서 여러 소리가 한꺼번에 날 때 겹치지 않게 조금씩 뒤로 미는 순서표 */
+let soundCursor = 0;
+function queue(name: SoundName, gapMs = 120) {
+  const t = Math.max(Date.now(), soundCursor);
+  play(name, t - Date.now());
+  const dur = buffers.get(name)?.duration ?? 0.5;
+  soundCursor = t + Math.min(dur * 1000, 700) + gapMs;
+}
+
+// 시간에 맞춰 나는 소리 (남은 시간 경고 · 낼 패 없음 · 3-2-1) — 화면을 그릴 때마다 맞춰 본다
+const timed: Record<string, { key: string; id: number }> = {};
+function timedPlay(slot: string, key: string, name: SoundName, whenMs: number) {
+  if (timed[slot]?.key === key) return;
+  clearTimeout(timed[slot]?.id);
+  delete timed[slot];
+  if (!key) return;
+  const wait = whenMs - now();
+  // 이미 시작했어야 할 소리면 늦은 만큼 건너뛰고 중간부터 (소리가 다 끝났으면 생략)
+  const dur = (buffers.get(name)?.duration ?? 0) * 1000;
+  if (wait < 0 && -wait > dur - 150) return;
+  timed[slot] = { key, id: window.setTimeout(() => play(name, 0, 0, Math.max(0, -wait)), Math.max(0, wait)) };
+}
+function stopTimed() { for (const s of Object.keys(timed)) { clearTimeout(timed[s].id); delete timed[s]; } }
 function syncTicks() {
   const d = view?.game?.deadline;
-  const key = view?.mine?.noPlay && d?.kind === 'autopass' ? `${d.at}` : '';
-  if (key === tickKey) return;
-  tickKey = key;
-  tickTimers.forEach(clearTimeout); tickTimers = [];
-  if (!key || !d) return;
-  const start = d.at - d.total;
-  for (let i = 0; i < 4; i++) {
-    const at = start + (i * d.total) / 4 - now();
-    if (at > -40) tickTimers.push(window.setTimeout(() => tick(i % 2 === 0), Math.max(0, at)));
-  }
+  const mineTurn = d && d.seat === view?.me;
+  // 낼 수 있는 패가 없을 때: 2초짜리 급한 똑딱
+  timedPlay('nopass', view?.mine?.noPlay && d?.kind === 'autopass' ? `${d.at}` : '', 'sfx-08-no-play', d ? d.at - d.total : 0);
+  // 내 차례 남은 시간 3초쯤: 차분한 째깍
+  timedPlay('warn', mineTurn && d?.kind === 'turn' && !view?.mine?.noPlay ? `${d.at}` : '', 'sfx-04-time-warn', d ? d.at - 3000 : 0);
+  // 다음 판 3-2-1: 마지막 '뾰옹'이 시작 순간에 맞게
+  const r = view?.result;
+  timedPlay('count', r && !r.ended ? `${r.nextAt}` : '', 'sfx-24-countdown', r ? r.nextAt - 3500 : 0);
 }
 
 // ───── 그리기 도우미 ─────
@@ -551,6 +663,7 @@ function sendSelection() { socket.emit('select', [...selected]); }
 app.addEventListener('click', (e) => {
   ensureAudio();
   const t = e.target as HTMLElement;
+  if (t.closest('button, [data-card]') && !t.closest('#soundBtn')) play('sfx-25-button');
   const card = t.closest<HTMLElement>('[data-card]');
   if (card) {
     const c = card.dataset.card!;
@@ -599,7 +712,7 @@ app.addEventListener('click', (e) => {
   } else if (id === 'soundBtn') {
     soundOn = !soundOn;
     store.set('sasaki-sound', soundOn ? 'on' : 'off');
-    if (soundOn) ensureAudio(); else { tickTimers.forEach(clearTimeout); tickTimers = []; tickKey = ''; }
+    if (soundOn) ensureAudio(); else stopTimed();
     render();
   }
 });

@@ -8,11 +8,21 @@ import { makeRoomCode, Room } from './room';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PAGE = [join(here, '../../web/dist/online.html'), join(here, '../web/dist/online.html'), join(process.cwd(), 'apps/web/dist/online.html')].find(existsSync);
+// 말소리·효과음 파일 (apps/web/sounds/*.mp3)
+const SOUNDS = [join(here, '../../web/sounds'), join(here, '../web/sounds'), join(process.cwd(), 'apps/web/sounds')].find(existsSync);
 
 export function startServer(port = Number(process.env.PORT) || 3000) {
   const rooms = new Map<string, Room>();
   const http = createServer((req, res) => {
     if (req.url === '/health') { res.writeHead(200).end('ok'); return; }
+    const snd = /^\/sounds\/([a-z0-9-]+\.mp3)(\?.*)?$/.exec(req.url ?? '');
+    if (snd) {
+      const file = SOUNDS && join(SOUNDS, snd[1]);
+      if (!file || !existsSync(file)) { res.writeHead(404).end(); return; }
+      res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'public, max-age=86400' });
+      res.end(readFileSync(file));
+      return;
+    }
     if (!PAGE) { res.writeHead(500).end('online.html 이 없습니다. 먼저 npm run build 를 실행하세요.'); return; }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
     res.end(readFileSync(PAGE));
