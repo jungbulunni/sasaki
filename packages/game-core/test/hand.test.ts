@@ -448,6 +448,19 @@ describe('[확정] 낼 수 있는 패가 없을 때', () => {
     expect(legalPlays(st, 1)).toEqual([]);
     expect(hasNoPlay(st)).toBe(false);
   });
+  it('[확정 11-09] 마지막 777은 찢어서 77 → 7로 낼 수 있음 (자동 패스 아님)', () => {
+    let st = setup([['S3', 'H3', 'S9', 'H10'], ['S7', 'H7', 'D7'], ['S5', 'H5', 'D10'], ['S6', 'S8']]);
+    st = ok(st, play(0, 'S3', 'H3'));
+    expect(hasNoPlay(st)).toBe(false);
+    expect(legalPlays(st, 1).map((c) => c.kind)).toEqual(['pair', 'pair', 'pair']);
+    st = ok(st, play(1, 'S7', 'H7'));
+    expect(st.hands[1]).toEqual(['D7']);
+  });
+  it('[확정 11-09] 찢어도 판 위 패를 못 이기면 그때만 자동 패스', () => {
+    let st = setup([['S14', 'S3', 'H10'], ['S7', 'H7', 'D7'], ['S5', 'H5', 'D10'], ['S6', 'S8']]);
+    st = ok(st, play(0, 'S14'));
+    expect(hasNoPlay(st)).toBe(true);
+  });
   it('선은 항상 낼 수 있음', () => {
     expect(hasNoPlay(setup([['S3'], ['S4'], ['S5'], ['S6']]))).toBe(false);
   });

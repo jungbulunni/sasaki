@@ -48,11 +48,22 @@ describe('분배', () => {
 });
 
 describe('탈락 · 배려판', () => {
-  it('지불 의무를 정확히 내고 0알 → 즉시 탈락, 게임 종료', () => {
+  it('[확정 11-09] 지불 의무를 정확히 내고 0알 → 탈락 아님, 0알로 계속', () => {
     const r = finishHand(withEggs([5, 5, 2, 7]), endedHand([0, 1], [0, 1, 2, 3]));
     expect(r.match.players[2].eggs).toBe(0);
-    expect(r.match.status).toBe('ended');
-    expect(r.match.eliminated).toEqual([2]);
+    expect(r.match.status).toBe('playing');
+    expect(r.match.eliminated).toEqual([]);
+    expect(r.match.careSeat).toBeNull();
+  });
+  it('[확정 11-09] 0알인 사람이 또 지면 배려판 대상', () => {
+    const r = finishHand(withEggs([5, 5, 0, 7]), endedHand([0, 1], [0, 1, 2, 3]));
+    expect(r.match.status).toBe('playing');
+    expect(r.match.careSeat).toBe(2);
+  });
+  it('[확정 11-09] 0알이어도 이기면 알을 얻고 계속', () => {
+    const r = finishHand(withEggs([5, 5, 0, 7]), endedHand([2, 3], [2, 3, 0, 1]));
+    expect(r.match.players[2].eggs).toBe(2);
+    expect(r.match.status).toBe('playing');
   });
   it('지급 부족으로 0알 → 배려판 대상, 다음 판 선', () => {
     const r = finishHand(withEggs([5, 5, 1, 7]), endedHand([0, 1], [0, 1, 2, 3]));

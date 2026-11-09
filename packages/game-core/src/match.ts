@@ -75,10 +75,13 @@ export function finishHand(m: MatchState, hand: HandState): { match: MatchState;
   // 배려판: 이번 판에서 알을 1개 이상 얻어야 생존 (물판·손해는 탈락)
   const careSurvived = careSeat === null ? null : s.deltas[careSeat] > 0;
 
-  const zero = [0, 1, 2, 3].filter((i) => match.players[i].eggs === 0);
-  // 정확히 내고 0알 → 탈락 / 이미 배려판을 쓴 사람이 0알 → 탈락
-  const eliminated = zero.filter((i) => match.players[i].careUsed || !s.shortage[i]);
-  const candidates = zero.filter((i) => !eliminated.includes(i));
+  // 2026-11-09 확정: 알을 정확히 다 내서 0알이 되면 탈락이 아니라 0알로 계속 플레이한다.
+  // 내야 할 알이 가진 알보다 많을 때(마이너스가 될 때)만 배려판 대상.
+  const short = [0, 1, 2, 3].filter((i) => s.shortage[i]);
+  const eliminated = [0, 1, 2, 3].filter((i) =>
+    (i === careSeat && careSurvived === false) ||           // 배려판에서 알을 못 얻음
+    (short.includes(i) && match.players[i].careUsed));      // 배려판을 이미 쓴 사람이 또 부족
+  const candidates = short.filter((i) => !eliminated.includes(i));
 
   if (eliminated.length > 0) {
     match.status = 'ended'; match.endReason = 'eliminated'; match.eliminated = eliminated;
