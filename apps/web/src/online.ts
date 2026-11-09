@@ -463,7 +463,7 @@ function centerHtml(v: View) {
       ${m.canDdook ? '<div class="prow"><button type="button" class="btn hot" data-act="declareDdook">뚝</button></div>' : ''}</div>`;
   }
   if (!g.trick.length) {
-    if (g.activeSeat !== null) return `<p class="pile-note"><b>${esc(nm(g.activeSeat))}</b> 선 · 아무 조합이나 낼 수 있어요</p>`;
+    // 누가 선인지는 자리 칸 색으로 보이므로 가운데에 이름을 따로 쓰지 않는다
     return '<p class="pile-note">&nbsp;</p>';
   }
   // 직전 카드(선명, 낸 사람 닉네임만) 위에 그 앞 카드(흐리게, 이름 없음)가 깔린 채 겹쳐 쌓인 모습
@@ -476,9 +476,7 @@ function centerHtml(v: View) {
       <div class="pcards">${p.cards.map((c) => cardHtml(c)).join('')}</div>
       ${last ? `<span class="pby">${esc(nm(p.seat))}</span>` : ''}</div>`;
   }).join('');
-  let note = '';
-  if (g.phase === 'reveal' && g.revealLeader !== null) note = `<p class="lead-note">${esc(nm(g.revealLeader))} 선</p>`;
-  return `<div class="pilewrap"><div class="pilecards">${pile}</div>${note}</div>`;
+  return `<div class="pilewrap"><div class="pilecards">${pile}</div></div>`;
 }
 
 function statusOf(v: View): { text: string; canPlay: boolean; warn?: boolean } {
