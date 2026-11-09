@@ -13,7 +13,8 @@ interface Sock {
 interface SeatV { nickname: string | null; connected: boolean; ai?: boolean; eggs?: number; cardCount?: number; rank?: number | null; fire?: 'fire' | 'pig' | null; runner?: boolean; ddooker?: boolean; passed?: boolean }
 interface PlayV { seat: number; cards: CardId[]; kind: string; via: string }
 interface DeadlineV { kind: string; at: number; total: number; seat: number | null }
-interface GameV { handNo: number; multiplier: number; buried: number; careSeat: number | null; phase: string; activeSeat: number | null; leaderSeat: number; runnerSeat: number | null; trick: PlayV[]; revealLeader: number | null; deadline: DeadlineV | null }
+interface RunShowV { id: number; start: number; runner: number; partner: number | null; runnerCards: CardId[]; partnerCard: CardId | null }
+interface GameV { runShow?: RunShowV | null; handNo: number; multiplier: number; buried: number; careSeat: number | null; phase: string; activeSeat: number | null; leaderSeat: number; runnerSeat: number | null; trick: PlayV[]; revealLeader: number | null; deadline: DeadlineV | null }
 interface MineV { hand: CardId[]; selection: CardId[]; myTurn: boolean; options: { type: 'chatda' | 'mureugi'; cards: CardId[] }[]; noPlay: boolean; canRun: boolean; canDdook: boolean; window: { type: 'kkotda' | 'blackpig'; cards: CardId[] } | null; team: string }
 interface ResultV { kind: string; winnerTeam: string | null; earlyEnd: boolean; decided: number; ranks: number[]; teams: string[]; deltas: number[]; eggs: number[]; multiplier: number; buried: number; careSurvived: boolean | null; nextCare: number | null; ended: boolean; endReason: string | null; eliminated: number[]; standings: { seat: number; nickname: string; eggs: number; place: number }[] | null; ready: number[]; nextAt: number; shufflePending: boolean }
 interface View { code: string; status: 'lobby' | 'playing' | 'ended'; host: number; startEggs: number; me: number; serverNow: number; seats: SeatV[]; game: GameV | null; mine: MineV | null; result: ResultV | null; log: { n: number; ev: any }[] }
@@ -477,7 +478,6 @@ function centerHtml(v: View) {
   }).join('');
   let note = '';
   if (g.phase === 'reveal' && g.revealLeader !== null) note = `<p class="lead-note">${esc(nm(g.revealLeader))} 선</p>`;
-  if (g.phase === 'waiting' && !m.window) note = `<p class="lead-note quiet">${ring(g.deadline, 'xs')} 잠시 기다리는 중</p>`;
   return `<div class="pilewrap"><div class="pilecards">${pile}</div>${note}</div>`;
 }
 
@@ -517,7 +517,7 @@ function handHtml(v: View) {
     <div class="hand">${m.hand.map((c) => cardHtml(c, { sel: selected.has(c), button: true })).join('') || '<p class="pile-note">카드를 모두 냈어요</p>'}</div>
     <div class="actions">
       <button type="button" class="btn primary" id="playBtn" ${st.canPlay ? '' : 'disabled'}>제출</button>
-      <button type="button" class="btn" id="passBtn" ${m.myTurn && g.trick.length && !m.noPlay ? '' : 'disabled'}>통과</button>
+      <button type="button" class="btn" id="passBtn" ${m.myTurn && g.trick.length ? '' : 'disabled'}>통과</button>
       ${btns.join('')}
       ${selected.size ? '<button type="button" class="btn ghost" id="clearBtn">선택 해제</button>' : ''}
     </div>
@@ -621,6 +621,111 @@ function render() {
   updateCountdown();
   flushPops();
   flushFlights();
+  syncRunShow();
+}
+
+// ───── 달리기 연출: 선언자 불 → 1초 → 같은 팀 불 → 1초 → 두 장을 서로 교환 (팀 확인 퍼포먼스) ─────
+// 돼지가 달리면 불 두 장을 1초 간격으로 돼지 닉네임 곁에 내려놓기만 한다 (교환 없음).
+const RUN_STEP = 1000;
+const SWAP_MS = 650;
+let runShowState: { id: number; cards: { el: HTMLElement; seat: number; slot: number }[]; timers: number[] } | null = null;
+
+/** 자리 닉네임 곁: 자리 칸 바깥, 탁자 가운데 쪽으로 바로 붙은 지점 (자리 칸과 겹치지 않게) */
+function runAnchor(seat: number, slot = 0, of = 1): { x: number; y: number } | null {
+  const el = document.querySelector<HTMLElement>(`.seat[data-seat="${seat}"]`);
+  const felt = document.querySelector<HTMLElement>('.felt');
+  if (!el || !felt) return null;
+  const r = el.getBoundingClientRect();
+  const f = felt.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const dx = f.left + f.width / 2 - cx, dy = f.top + f.height / 2 - cy;
+  const cw = 40, ch = cw * 1.43, gap = 8;
+  const spread = (slot - (of - 1) / 2) * cw * 1.15;
+  // 가운데가 옆쪽이면 자리 칸 옆에, 위·아래쪽이면 자리 칸 위·아래에
+  if (Math.abs(dx) / r.width > Math.abs(dy) / r.height) {
+    return { x: cx + Math.sign(dx) * (r.width / 2 + gap + cw / 2), y: cy + (slot - (of - 1) / 2) * ch * 0.6 };
+  }
+  return { x: cx + spread, y: cy + Math.sign(dy) * (r.height / 2 + gap + ch / 2) };
+}
+
+function placeRunCard(card: CardId, seat: number, slot: number, of: number, animate: boolean) {
+  const p = runAnchor(seat, slot, of);
+  if (!p || !runShowState) return;
+  const el = document.createElement('div');
+  el.className = 'runcard';
+  el.setAttribute('aria-hidden', 'true');
+  el.innerHTML = cardHtml(card);
+  el.style.left = `${p.x}px`; el.style.top = `${p.y}px`;
+  document.body.appendChild(el);
+  runShowState.cards.push({ el, seat, slot });
+  if (animate) {
+    play('sfx-05-play-card');
+    if (!reduceMotion) el.animate([
+      { transform: 'translate(-50%, -50%) translateY(-26px) scale(1.45) rotate(-10deg)', opacity: 0 },
+      { transform: 'translate(-50%, -50%) scale(.94) rotate(3deg)', opacity: 1, offset: 0.7 },
+      { transform: 'translate(-50%, -50%) scale(1) rotate(0)', opacity: 1 },
+    ], { duration: 380, easing: 'cubic-bezier(.2,.7,.3,1)' });
+  }
+}
+
+function swapRunCards(animate: boolean) {
+  const st = runShowState;
+  if (!st || st.cards.length < 2) return;
+  const [a, b] = st.cards;
+  const pa = runAnchor(b.seat), pb = runAnchor(a.seat); // a는 b 자리로, b는 a 자리로
+  if (!pa || !pb) return;
+  if (animate) play('sfx-05-play-card');
+  const move = (c: { el: HTMLElement; seat: number }, to: { x: number; y: number }, lift: number) => {
+    const x0 = parseFloat(c.el.style.left), y0 = parseFloat(c.el.style.top);
+    const dx = to.x - x0, dy = to.y - y0;
+    c.el.style.left = `${to.x}px`; c.el.style.top = `${to.y}px`;
+    if (!animate || reduceMotion) return;
+    // 두 장이 서로 부딪히지 않게 살짝 반대쪽으로 휘어 지나간다
+    const nx = -dy, ny = dx, len = Math.hypot(nx, ny) || 1;
+    const ox = (nx / len) * lift, oy = (ny / len) * lift;
+    c.el.animate([
+      { transform: `translate(-50%, -50%) translate(${-dx}px, ${-dy}px)` },
+      { transform: `translate(-50%, -50%) translate(${-dx / 2 + ox}px, ${-dy / 2 + oy}px) scale(1.18) rotate(${lift > 0 ? 12 : -12}deg)`, offset: 0.5 },
+      { transform: 'translate(-50%, -50%)' },
+    ], { duration: SWAP_MS, easing: 'cubic-bezier(.45,.05,.3,1)' });
+  };
+  move(a, pa, 34);
+  move(b, pb, -34);
+}
+
+function endRunShow() {
+  const st = runShowState;
+  runShowState = null;
+  if (!st) return;
+  st.timers.forEach(clearTimeout);
+  for (const c of st.cards) {
+    if (reduceMotion) { c.el.remove(); continue; }
+    const an = c.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 250, fill: 'forwards' });
+    an.onfinish = () => c.el.remove();
+  }
+}
+
+function syncRunShow() {
+  const rs = view?.status === 'playing' ? view.game?.runShow ?? null : null;
+  if (!rs) { if (runShowState) endRunShow(); return; }
+  if (runShowState?.id === rs.id) return;
+  endRunShow();
+  runShowState = { id: rs.id, cards: [], timers: [] };
+  const st = runShowState;
+  const steps: { at: number; run: (animate: boolean) => void }[] = [];
+  if (rs.partner === null) {
+    rs.runnerCards.forEach((c, i) => steps.push({ at: i * RUN_STEP, run: (an) => placeRunCard(c, rs.runner, i, rs.runnerCards.length, an) }));
+  } else {
+    steps.push({ at: 0, run: (an) => placeRunCard(rs.runnerCards[0], rs.runner, 0, 1, an) });
+    steps.push({ at: RUN_STEP, run: (an) => placeRunCard(rs.partnerCard!, rs.partner!, 0, 1, an) });
+    steps.push({ at: RUN_STEP * 2, run: (an) => swapRunCards(an) });
+  }
+  // 늦게 들어왔으면 이미 지난 단계는 소리·움직임 없이 바로 그 상태로
+  const elapsed = now() - rs.start;
+  for (const s of steps) {
+    if (s.at <= elapsed - 150) s.run(false);
+    else st.timers.push(window.setTimeout(() => { if (runShowState === st) s.run(true); }, Math.max(0, s.at - elapsed)));
+  }
 }
 
 /** "통과" 말풍선: 그 사람 자리 위에서 한 번 커졌다가 사라짐 (불이야보다 작게) */

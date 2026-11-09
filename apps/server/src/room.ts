@@ -5,7 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   aiDecide, aiDelay, aiView, AI_NAMES, applyHandBatch, AUTO_PASS_MS, CardId, classifyCombo, createMatch, finalStandings, finishHand, HandAction,
   HandEvent, HandOutcome, HandState, hasNoPlay, MatchState, Play, seededRng, sortHand, specialOptions, startHand,
-  teamOf, timeoutAction, Rng,
+  isFire, teamOf, timeoutAction, Rng,
 } from '../../../packages/game-core/src/index';
 
 export const TIMES = {
@@ -16,6 +16,8 @@ export const TIMES = {
   revealSpecial: 2000, // 찼다·꽂다 후 판 정리
   revealPig: 3000,     // 불돼지·흑돼지 후 판 정리
   revealEnd: 2000,     // 판 끝난 직후 마지막 카드
+  runShow: 3000,       // 달리기: 내 불 → 1초 → 같은 팀 불 → 1초 → 교환 (끝난 뒤 뚝 5초 시작)
+  runShowPig: 2500,    // 돼지 달리기: 불 두 장을 1초 간격으로 보여줌 (교환 없음)
   result: 10000,       // 결과 화면 후 자동으로 다음 판 카운트다운 시작
   countdown: 3000,     // 3-2-1
   emptyRoom: 3600_000, // 모두 나간 뒤 방 보존 1시간
@@ -23,7 +25,7 @@ export const TIMES = {
 
 const CLIENT_ACTIONS = new Set(['play', 'pass', 'chatda', 'mureugi', 'kkotda', 'kkotdaPass', 'blackPigSubmit', 'blackPigPass', 'declareRun', 'declareDdook']);
 
-type DeadlineKind = 'turn' | 'autopass' | 'window' | 'run' | 'ddook' | 'reveal' | 'next';
+type DeadlineKind = 'turn' | 'autopass' | 'window' | 'run' | 'ddook' | 'reveal' | 'runshow' | 'next';
 interface Deadline { kind: DeadlineKind; key: string; at: number; total: number }
 
 interface SeatInfo {
@@ -70,6 +72,8 @@ export class Room {
   outcome: HandOutcome | null = null;
   handRev = 0;
   reveal: { plays: Play[]; until: number } | null = null;
+  /** 달리기 선언 직후 불 카드 공개·교환 연출 (이 동안은 아무 행동도 받지 않음) */
+  runShow: { id: number; start: number; until: number; runner: number; partner: number | null; runnerCards: CardId[]; partnerCard: CardId | null } | null = null;
   deadline: Deadline | null = null;
   nextAt = 0;
   ready = new Set<number>();
@@ -154,6 +158,7 @@ export class Room {
     this.pausedAt = null;
     if (this.deadline) this.deadline.at += shift; // 남은 시간 그대로 유지
     if (this.reveal) this.reveal.until += shift;
+    if (this.runShow) { this.runShow.until += shift; this.runShow.start += shift; }
     if (this.nextAt) this.nextAt += shift;
     this.arm();
     this.scheduleAi();
@@ -258,7 +263,7 @@ export class Room {
   /** 상태가 바뀔 때마다 AI 자리의 다음 행동을 사람 같은 반응 시간 뒤로 예약 */
   private scheduleAi() {
     this.clearAiTimers();
-    if (!this.hand || this.reveal || this.outcome || this.pausedAt !== null || this.status !== 'playing') return;
+    if (!this.hand || this.reveal || this.runShow || this.outcome || this.pausedAt !== null || this.status !== 'playing') return;
     const rev = this.handRev;
     for (let i = 0; i < 4; i++) {
       if (!this.controlled(i)) continue;
@@ -277,7 +282,7 @@ export class Room {
     if (seat !== this.host || this.status !== 'ended') return;
     this.status = 'lobby';
     this.match = null; this.hand = null; this.lastHand = null; this.outcome = null;
-    this.reveal = null; this.deadline = null; this.nextAt = 0; this.log = [];
+    this.reveal = null; this.runShow = null; this.deadline = null; this.nextAt = 0; this.log = [];
     this.seats = this.seats.map((x) => (x && x.connected ? x : null));
     if (!this.seats[this.host] || this.seats[this.host]!.ai) this.host = this.humans()[0] ?? 0;
     this.broadcast();
@@ -385,6 +390,7 @@ export class Room {
       for (const b of batch) this.cb.emit(b.seat, 'notice', '카드를 정리하는 중이에요');
       return;
     }
+    if (this.runShow) return; // 불 공개 연출 중에는 잠시 기다림
     this.applyBatch(batch.map((b) => b.action), batch);
   }
 
@@ -404,6 +410,7 @@ export class Room {
     for (const e of events) {
       if (e.type === 'returned') continue;
       if (e.type === 'pig' || (e.type === 'run' && this.hand!.teamMode === 'pig-1v3')) this.pigRevealed = true;
+      if (e.type === 'run') this.startRunShow(e.seat);
       if (e.type === 'trickCleared') {
         const vias = e.cleared.map((p) => p.via);
         const pig = e.cleared.some((p) => p.combo.kind === 'bulpig' || p.via === 'blackpig');
@@ -426,6 +433,22 @@ export class Room {
     }
   }
 
+  /** 달리기 선언 직후: 선언자 불 → 1초 → 같은 팀 불 → 1초 → 서로 교환 (교환은 game-core에서 이미 끝난 상태) */
+  private startRunShow(runner: number) {
+    const h = this.hand!;
+    const start = Date.now();
+    if (h.teamMode === 'pig-1v3') {
+      this.runShow = { id: this.logN + 1, start, until: start + TIMES.runShowPig, runner, partner: null, runnerCards: h.hands[runner].filter(isFire), partnerCard: null };
+      return;
+    }
+    const partner = h.fireOwners.find((s) => s !== runner)!;
+    // 교환이 끝난 손패 기준: 선언자의 원래 불은 지금 같은 팀 손에, 같은 팀의 원래 불은 지금 선언자 손에 있다
+    this.runShow = {
+      id: this.logN + 1, start, until: start + TIMES.runShow, runner, partner,
+      runnerCards: [h.hands[partner].find(isFire)!], partnerCard: h.hands[runner].find(isFire)!,
+    };
+  }
+
   private pushLog(ev: PublicEvent) {
     this.log.push({ n: ++this.logN, ev });
     if (this.log.length > 80) this.log.shift();
@@ -443,6 +466,9 @@ export class Room {
   private want(): { kind: DeadlineKind; key: string; total: number; fire: () => void } | null {
     const h = this.hand;
     if (!h) return null;
+    if (this.runShow) {
+      return { kind: 'runshow', key: `runshow:${this.runShow.id}`, total: this.runShow.until - Date.now(), fire: () => { this.runShow = null; this.changed(); } };
+    }
     if (this.reveal) {
       return { kind: 'reveal', key: `reveal:${this.handRev}`, total: this.reveal.until - Date.now(), fire: () => { this.reveal = null; this.changed(); } };
     }
@@ -474,7 +500,7 @@ export class Room {
     const w = this.want();
     if (!w) { this.deadline = null; return; }
     if (this.deadline?.key !== w.key) {
-      const at = w.kind === 'reveal' ? this.reveal!.until : w.kind === 'next' ? this.nextAt : Date.now() + w.total;
+      const at = w.kind === 'reveal' ? this.reveal!.until : w.kind === 'runshow' ? this.runShow!.until : w.kind === 'next' ? this.nextAt : Date.now() + w.total;
       this.deadline = { kind: w.kind, key: w.key, at, total: w.kind === 'next' ? TIMES.countdown : w.total };
     }
     const ms = Math.max(0, this.deadline!.at - Date.now());
@@ -513,7 +539,7 @@ export class Room {
     let result: unknown = null;
     if (h && m) {
       const shownTrick = (this.reveal?.plays ?? h.trick).map((p) => ({ seat: p.seat, cards: p.combo.cards, kind: p.combo.kind, via: p.via }));
-      const busy = !!this.reveal || !!this.outcome;
+      const busy = !!this.reveal || !!this.runShow || !!this.outcome;
       const d = this.deadline;
       const isWindowMine = h.window?.seat === me;
       game = {
@@ -521,18 +547,23 @@ export class Room {
         multiplier: h.multiplier,
         buried: m.buried,
         careSeat: this.outcome ? null : m.careSeat,
-        phase: this.outcome ? 'hand-over' : this.reveal ? 'reveal' : h.window ? 'waiting' : h.phase,
+        phase: this.outcome ? 'hand-over' : this.reveal ? 'reveal' : this.runShow ? 'run-show' : h.window ? 'waiting' : h.phase,
         activeSeat: !busy && h.phase === 'turn' ? h.activeSeat : null,
         leaderSeat: h.leaderSeat,
         runnerSeat: h.runner,
         trick: shownTrick,
+        runShow: this.runShow ? { id: this.runShow.id, start: this.runShow.start, runner: this.runShow.runner, partner: this.runShow.partner, runnerCards: this.runShow.runnerCards, partnerCard: this.runShow.partnerCard } : null,
         revealLeader: this.reveal && !this.outcome ? h.leaderSeat : null,
         // 꽂다·흑돼지 창: 누가 고민 중인지는 숨기고 기다리는 시간만 공개
         deadline: d
           ? { kind: d.kind === 'autopass' ? (h.activeSeat === me ? 'autopass' : 'turn') : d.kind, at: d.at, total: d.total, seat: d.kind === 'turn' || d.kind === 'autopass' ? h.activeSeat : null }
           : null,
       };
-      const hand = sortHand(h.hands[me]);
+      // 달리기 연출 중에는 교환될 불 카드가 탁자 위에 있으므로 내 주패에서 잠시 빼 둔다 (교환이 끝나면 새 불이 들어옴)
+      const rs = this.runShow;
+      const onTable: (CardId | null)[] = !rs ? [] : rs.partner === null ? (me === rs.runner ? rs.runnerCards : [])
+        : me === rs.runner ? [rs.partnerCard] : me === rs.partner ? [rs.runnerCards[0]] : [];
+      const hand = sortHand(h.hands[me].filter((c) => !onTable.includes(c)));
       mine = {
         hand,
         selection: this.seats[me]?.selection ?? [],

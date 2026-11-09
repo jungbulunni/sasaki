@@ -41,6 +41,8 @@ function assertNoLeak(room: Room, seat: number) {
   const mine = new Set(room.hand ? room.hand.hands[seat] : []);
   const pub = new Set((room.reveal?.plays ?? room.hand?.trick ?? []).flatMap((p) => p.combo.cards));
   if (room.lastHand) room.lastHand.trick.forEach((p) => p.combo.cards.forEach((c) => pub.add(c)));
+  // 달리기 연출의 불 카드는 모두에게 공개된 정보
+  if (room.runShow) [...room.runShow.runnerCards, room.runShow.partnerCard].forEach((c) => c && pub.add(c));
   // 흑돼지 창의 ♠10♣10 표시는 본인 창일 때만 나옴
   for (const c of cards) expect(mine.has(c) || pub.has(c) || (c === 'S10' || c === 'C10') && room.hand?.window?.seat === seat, `${seat}번에게 ${c} 노출`).toBe(true);
 }
@@ -459,5 +461,35 @@ describe('[확정] 판 결과 화면에서 나가기', () => {
     rig(room, [['S5', 'S9', 'H10'], ['S6', 'S12', 'D10'], ['S3', 'S8'], ['S7', 'C3']], 0);
     vi.advanceTimersByTime(4500);
     expect(room.hand!.trick[0]?.seat).toBe(0);
+  });
+});
+
+describe('달리기 불 공개·교환 연출', () => {
+  it('달리기 → 3초 연출(행동 받지 않음) → 그 뒤에 뚝 5초', () => {
+    const { room } = makeRoom();
+    room.start(0);
+    const h = createHand([
+      ['H10', 'S3', 'S4'], ['D10', 'S5', 'S6'], ['S7', 'S8', 'S9'], ['C3', 'C4', 'C5'],
+    ], 0);
+    room.hand = h;
+    (room as any).changed();
+    expect(room.hand!.phase).toBe('run-declare');
+    act(room, 0, 'declareRun');
+    const v = room.view(2);
+    expect(v.game!.phase).toBe('run-show');
+    expect((v.game as any).runShow).toMatchObject({ runner: 0, partner: 1, runnerCards: ['H10'], partnerCard: 'D10' });
+    expect(v.mine!.canDdook).toBe(false);
+    // 연출 중에는 뚝을 눌러도 받지 않음
+    act(room, 2, 'declareDdook');
+    expect(room.hand!.ddooker).toBeNull();
+    vi.advanceTimersByTime(TIMES.runShow);
+    const v2 = room.view(2);
+    expect(v2.game!.phase).toBe('ddook-declare');
+    expect((v2.game as any).runShow).toBeNull();
+    expect(v2.game!.deadline!.kind).toBe('ddook');
+    expect(v2.mine!.canDdook).toBe(true);
+    // 교환은 이미 끝나 있음
+    expect(room.hand!.hands[0]).toContain('D10');
+    expect(room.hand!.hands[1]).toContain('H10');
   });
 });

@@ -26,6 +26,9 @@ function bot(s: Socket, seat: number, token: string): Bot {
     const own = new Set<string>(v.mine?.hand ?? []);
     const pub = new Set<string>((v.game?.trick ?? []).flatMap((p: any) => p.cards));
     for (const c of v.mine?.window?.cards ?? []) own.add(c);
+    // 달리기 연출의 불 카드는 규칙상 모두에게 공개
+    const rs = v.game?.runShow;
+    if (rs) [...rs.runnerCards, rs.partnerCard].forEach((c: string | null) => c && pub.add(c));
     const json = JSON.stringify({ ...v, log: [] });
     for (const m of json.matchAll(/"([SHDC](?:1[0-4]|[3-9]))"/g)) if (!own.has(m[1]) && !pub.has(m[1])) b.leaks.push(m[1]);
     react(b, v);

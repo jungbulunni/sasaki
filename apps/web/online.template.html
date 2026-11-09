@@ -266,6 +266,8 @@ details.log:not([open]) > summary .eyebrow::after { content: " ▸"; }
 @keyframes fade { 0%, 100% { opacity: 0; } 15%, 80% { opacity: 1; } }
 
 /* ── 날아가는 카드 ── */
+.runcard { position: fixed; z-index: 23; transform: translate(-50%, -50%); pointer-events: none; will-change: transform; filter: drop-shadow(0 8px 10px rgba(20, 6, 32, .45)); }
+.runcard .card { --w: 40px; }
 .flyer { position: fixed; z-index: 23; margin: 0; display: flex; flex-wrap: nowrap; justify-content: center; gap: 4px; pointer-events: none; will-change: transform; filter: drop-shadow(0 8px 10px rgba(20, 6, 32, .45)); }
 .play.incoming .pcards { visibility: hidden; }
 
