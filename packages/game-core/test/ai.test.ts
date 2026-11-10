@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { seededRng } from '../src/cards';
+import { rankOf, seededRng } from '../src/cards';
 import { aiDecide, aiView, AI_NAMES, mateBeatsSingle, mateProbs } from '../src/ai';
 import { applyHandAction, HandAction, HandState, hasNoPlay } from '../src/hand';
 import { createMatch, finishHand, startHand } from '../src/match';
@@ -211,6 +211,36 @@ describe('AI', () => {
       const v = aiView(st, 0);
       expect(mateBeatsSingle(v, 2, 14)).toBe(0);           // A보다 높은 카드는 없음
       expect(mateBeatsSingle(v, 2, 3)).toBeGreaterThan(0.95); // 3보다 높은 카드는 거의 확실히 있음
+    });
+
+    it('같은 편이 낸 카드라도, 가져오면 바로 나갈 수 있으면 찼다', () => {
+      // 1·3번이 불팀(공개). 같은 편 1번이 8을 냄 → 3번은 8·8로 차면 3·4·5 닐리리만 남아 다음에 바로 완주
+      let st = setup([['S3'], ['S4'], ['S5'], ['S6']]);
+      st.hands = [['S11', 'S12', 'C3', 'C4'], ['H10', 'S8', 'C5', 'C6', 'C7', 'C9', 'C11', 'C12'], ['D11', 'D12', 'D13', 'D3'], ['D10', 'H8', 'D8', 'S3', 'S4', 'S5']];
+      st.fireOwners = [1, 3]; st.revealedFire = [1, 3];
+      st.activeSeat = 1; st.leaderSeat = 1;
+      st = ok(st, play(1, 'S8'));
+      expect(aiDecide(aiView(st, 3), seededRng(1))).toMatchObject({ type: 'chatda', seat: 3 });
+    });
+
+    it('같은 편이 곧 나갈 것 같으면 같은 편 카드는 차지 않고 양보 (가끔 5% 정도는 가로챔)', () => {
+      let st = setup([['S3'], ['S4'], ['S5'], ['S6']]);
+      st.hands = [['S11', 'S12', 'C3', 'C4'], ['H10', 'S8', 'C5'], ['D11', 'D12', 'D13', 'D3'], ['D10', 'H8', 'D8', 'S3', 'S6', 'H13', 'S14']];
+      st.fireOwners = [1, 3]; st.revealedFire = [1, 3];
+      st.activeSeat = 1; st.leaderSeat = 1;
+      st = ok(st, play(1, 'S8'));
+      for (let i = 1; i <= 10; i++) expect(aiDecide(aiView(st, 3), seededRng(i))?.type).not.toBe('chatda');
+    });
+
+    it('같은 편이 3장 남았고 내가 선이면, 상상해서 받기 좋은 낮은 패를 내 준다 (공격 카드는 안 씀)', () => {
+      const st = setup([['S3'], ['S4'], ['S5'], ['S6']]);
+      st.hands = [['S3', 'H3', 'S4', 'S5', 'S6', 'C9', 'D9', 'H9'], ['H10', 'C3', 'C4', 'C5', 'C6'], ['D11', 'D12', 'D13'], ['D10', 'D3', 'D4', 'D5', 'D6']];
+      st.fireOwners = [1, 3]; st.revealedFire = [1, 3]; // 0·2번이 흑팀, 같은 편 2번이 3장
+      st.activeSeat = 0; st.leaderSeat = 0;
+      const d = aiDecide(aiView(st, 0), seededRng(1));
+      expect(d?.type).toBe('play');
+      const cards = (d as any).cards as string[];
+      expect(cards.every((c) => rankOf(c) <= 6)).toBe(true); // 9·9·9 틀은 아낌, 낮은 패로 밀어줌
     });
   });
 });

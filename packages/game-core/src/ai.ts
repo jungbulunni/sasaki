@@ -2,7 +2,7 @@
 // 원칙: 자기 주패와 모두가 볼 수 있는 정보(판 위 카드, 남은 장수, 공개된 불)만 사용한다.
 // 다른 사람의 주패는 절대 읽지 않는다 (aiView 로 걸러낸 정보만 판단에 씀).
 
-import { CardId, isFire, rankOf, Rng } from './cards';
+import { CardId, isFire, rankOf, Rng, seededRng } from './cards';
 import { canBeat, Combo, ComboKind, enumerateCombos } from './combos';
 import { HandAction, HandState, NO_FINISH_KINDS, Play, specialOptions, teamOf } from './hand';
 
@@ -134,6 +134,121 @@ function unseenCards(v: AiView): CardId[] {
   return all.filter((c) => !seen.has(c) && !v.hand.includes(c));
 }
 
+// ───── 다른 사람 주패 상상하기 ─────
+// 아직 안 나온 카드를 남은 장수대로 무작위로 나눠 보는 것을 여러 번 반복해서 확률을 어림한다.
+// (같은 상황에서는 같은 결과가 나오도록 상황마다 고정된 난수를 쓴다)
+const SAMPLES = 40;
+
+function rankCounts(cards: CardId[]): number[] {
+  const n = new Array(15).fill(0);
+  for (const c of cards) n[rankOf(c)]++;
+  return n;
+}
+
+/** 이 랭크 개수로 판 위 패를 같은 종류(또는 틀)로 이길 수 있는지 — 0: 못 이김, 1: 같은 종류로, 0.5: 틀로만 */
+function beatLevel(n: number[], top: Combo): number {
+  const run = (L: number, need: number) => {
+    for (let t = top.top + 1; t <= 14; t++) {
+      let ok = true;
+      for (let r = t - L + 1; r <= t; r++) if (r < 3 || n[r] < need) { ok = false; break; }
+      if (ok) return true;
+    }
+    return false;
+  };
+  let same = false;
+  if (top.kind === 'single') for (let r = top.top + 1; r <= 14 && !same; r++) same = n[r] >= 1;
+  else if (top.kind === 'pair') for (let r = top.top + 1; r <= 14 && !same; r++) same = n[r] >= 2;
+  else if (top.kind === 'nilliri') same = run(top.length, 1);
+  else if (top.kind === 'ssangka') same = run(top.length, 2);
+  else if (top.kind === 'teul') for (let r = top.top + 1; r <= 14 && !same; r++) same = n[r] >= 3;
+  if (same) return 1;
+  if (top.kind === 'single' || top.kind === 'pair' || top.kind === 'nilliri') return n.some((x) => x >= 3) ? 0.5 : 0;
+  return 0;
+}
+
+/** 이 주패 전체를 한 번에 내서 판 위 패를 이기고 바로 완주할 수 있는지 */
+function finishesOver(hand: CardId[], top: Combo): boolean {
+  const n = rankCounts(hand);
+  const ranks: number[] = [];
+  for (let r = 3; r <= 14; r++) if (n[r]) ranks.push(r);
+  const consecutive = ranks.every((r, i) => i === 0 || r === ranks[i - 1] + 1);
+  const hi = ranks.at(-1) ?? 0;
+  if (hi <= top.top) return false;
+  switch (top.kind) {
+    case 'single': return hand.length === 1;
+    case 'pair': return hand.length === 2 && ranks.length === 1;
+    case 'nilliri': return hand.length === top.length && ranks.length === hand.length && consecutive;
+    case 'ssangka': return ranks.length === top.length && ranks.every((r) => n[r] === 2) && consecutive;
+    default: return false;
+  }
+}
+
+/** 다른 세 사람 주패를 한 번 상상해서 나눠 본다 */
+function imagineOthers(v: AiView, unseen: CardId[], rng: Rng): CardId[][] {
+  const deck = [...unseen];
+  for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+  const hands: CardId[][] = [[], [], [], []];
+  let k = 0;
+  for (let s = 0; s < 4; s++) if (s !== v.seat) { hands[s] = deck.slice(k, k + v.counts[s]); k += v.counts[s]; }
+  return hands;
+}
+
+function situationRng(v: AiView, tag: string): Rng {
+  const key = `${tag}|${v.seat}|${v.hand.slice().sort().join('')}|${v.counts.join(',')}|${v.trick.map((p) => p.combo.cards.join('')).join('/')}`;
+  return seededRng(Math.floor(stableRoll(key) * 4294967296));
+}
+
+/** 같은 편이 받아치기 좋은(가능하면 그걸로 바로 완주할) 패 고르기 */
+function bestFeed(v: AiView, mate: number, plays: Combo[]): Combo | null {
+  const cands = plays.filter((c) => !STRONG.includes(c.kind) && c.cards.length < v.hand.length);
+  if (!cands.length) return null;
+  const unseen = unseenCards(v);
+  const rng = situationRng(v, 'feed');
+  const worlds = Array.from({ length: SAMPLES }, () => imagineOthers(v, unseen, rng)[mate]);
+  // 사람은 끝까지 페어·닐리리를 들고 있는 경우가 많다 — 실제 대전에서 잰 비율만큼 그런 모양에 무게를 더 준다
+  // (남은 2장이 페어: 무작위 약 6% → 실제 약 14%, 남은 3장: 페어+1장 18%→29%, 닐리리 3%→7%)
+  const weight = (h: CardId[]) => {
+    const u = new Set(h.map(rankOf)).size;
+    if (h.length === 2) return u === 1 ? 2.3 : 1;
+    if (h.length === 3) { const r = h.map(rankOf).sort((a, b) => a - b); return u === 2 ? 1.6 : u === 3 && r[2] - r[0] === 2 ? 2.5 : 1; }
+    return 1;
+  };
+  const ws = worlds.map(weight), total = ws.reduce((a, b) => a + b, 0);
+  let best: Combo | null = null, bestScore = -Infinity;
+  for (const c of cands) {
+    let can = 0, out = 0;
+    worlds.forEach((h, i) => {
+      if (finishesOver(h, c)) out += ws[i];
+      if (beatLevel(rankCounts(h), c) === 1) can += ws[i];
+    });
+    const score = (out * 3 + can) / total - c.top * 0.02 - breakCost(v.hand, c) / 30 + c.cards.length * 0.03;
+    if (can > 0 && score > bestScore) { bestScore = score; best = c; }
+  }
+  return best;
+}
+
+/** 내 주패를 다 내는 데 걸릴 대략의 차례 수 (같은 숫자 묶음 1번, 한 장짜리 연속 3개 이상은 닐리리 1번) */
+function turnsToOut(hand: CardId[]): number {
+  const n = rankCounts(hand);
+  let turns = 0, run = 0;
+  for (let r = 3; r <= 15; r++) {
+    if (r <= 14 && n[r]) turns++;
+    if (r <= 14 && n[r] === 1) run++;
+    else { if (run >= 3) turns -= run - 1; run = 0; }
+  }
+  return turns;
+}
+
+/** 같은 편 대신 내가 선을 가져오는 게 더 나은지 (left: 가로챈 뒤 남는 내 주패) */
+function takeLeadFromMate(v: AiView, mate: number, left: CardId[]): boolean {
+  if (left.length === 0) return true;
+  const mine = turnsToOut(left);
+  const mateCards = v.counts[mate];
+  if (mateCards <= 2) return mine <= 1;               // 같은 편이 곧 나갈 것 같으면 양보 (내가 바로 나갈 수 있을 때만 가져옴)
+  if (mine <= 1) return true;                          // 선만 잡으면 바로 나갈 수 있음
+  return mine + 1 <= Math.ceil(mateCards / 2);         // 내가 같은 편보다 확실히 빨리 나갈 수 있음
+}
+
 /**
  * 같은 편이 싱글 r 보다 높은 카드를 한 장이라도 들고 있을 확률.
  * 안 나온 카드가 무작위로 나뉘어 있다고 보고 계산 (초기하분포).
@@ -213,8 +328,12 @@ function chatdaWorth(v: AiView, opt: { cards: CardId[] }, danger: boolean): numb
   const probs = mateProbs(v);
   if (target !== undefined && probs[target] >= 0.5 && probs[target] < 0.99) p *= 1 - probs[target] * 0.6;
   if (danger) p = Math.max(p, 0.85 * (1 - risk * (r >= 13 ? 0.6 : 0.3)));
-  // 확실한 같은 편이 낸 카드는 차지 않는다 (같은 편의 선을 뺏는 셈)
-  if (mate !== null && target === mate) p *= 0.05;
+  // 확실한 같은 편이 낸 카드는 보통 차지 않는다 (같은 편의 선을 뺏는 셈).
+  // 단, 내가 선을 가져오는 게 팀에 더 유리하면 양보하지 않고 가져온다
+  if (mate !== null && target === mate) {
+    const left = v.hand.filter((c) => !opt.cards.includes(c));
+    p = takeLeadFromMate(v, mate, left) ? Math.max(p, 0.9) : p * 0.05;
+  }
   return p;
 }
 
@@ -224,7 +343,11 @@ function kkotdaWorth(v: AiView, danger: boolean): number {
   if (v.hand.length - cards.length <= 1) return 1;
   let p = 0.9;
   const mate = knownTeammate(v);
-  if (mate !== null && v.window!.baseSeat === mate) p *= 0.05; // 같은 편이 이미 선을 잡음 → 뺏지 않음
+  if (mate !== null && v.window!.baseSeat === mate) { // 같은 편이 이미 선을 잡음 → 보통은 뺏지 않지만, 내가 가져오는 게 유리하면 가져옴
+    const left = v.hand.filter((c) => !cards.includes(c));
+    if (takeLeadFromMate(v, mate, left)) return 0.95;
+    p *= 0.05;
+  }
   if (cards.length === 1) {
     const r = rankOf(cards[0]);
     const has = (x: number) => countRank(v.hand, x) > 0;
@@ -309,7 +432,12 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
     }
   }
 
-  // ④ 내가 선이고 같은 편이 곧 나갈 것 같으면 받기 쉬운 낮은 카드를 내 준다 (상대가 급하지 않을 때)
+  // ④ 내가 선이고 같은 편이 3장 이하 남았으면, 같은 편 주패를 상상해 보고 받기 좋은 패를 내 준다
+  //    (예: 2장 남음 → 페어일 확률이 높으니 낮은 페어, 3장 남음 → 닐리리일 것 같으면 낮은 닐리리)
+  if (!top && mateLive && v.counts[mate!] <= 3 && !danger) {
+    const feed = bestFeed(v, mate!, plays);
+    if (feed) return { type: 'play', seat, cards: feed.cards };
+  }
   if (!top && mateNearOut && !danger) {
     const singles = plays.filter((c) => c.kind === 'single').sort((a, b) => a.top - b.top);
     const pairs = plays.filter((c) => c.kind === 'pair').sort((a, b) => a.top - b.top);
