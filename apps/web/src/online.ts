@@ -1,6 +1,7 @@
 // M3 온라인 화면: 서버가 보내준 "내 화면 정보"만 그린다. 판정은 전부 서버가 한다.
 import { canBeat, CardId, classifyCombo, COMBO_NAME, isFire, rankOf, suitOf } from '../../../packages/game-core/src/index';
 import { eggSvg, pigBodySvg, pigFaceSvg } from './pig';
+import { closeGuide, isGuideOpen, onGuideBack, openGuide } from './guide';
 
 declare const io: (opts?: unknown) => Sock;
 interface Sock {
@@ -400,7 +401,7 @@ function lobbyHtml(v: View) {
     return `<li class="lseat${s.nickname ? '' : ' empty'}"><span class="lnum">${i + 1}</span><span class="lname">${s.nickname ? esc(s.nickname) : '빈 자리'}</span>${s.ai ? '<i class="chip aichip">AI</i>' : ''}${i === v.host && s.nickname ? '<i class="chip host">방장</i>' : ''}${i === v.me ? '<i class="chip mychip">나</i>' : ''}${tools}</li>`;
   }).join('');
   return `<main class="lobby">
-    <span class="logo">사사끼</span>
+    <div class="lobbytop"><span class="logo">사사끼</span><button type="button" class="btn small line" id="guideBtn">게임 가이드라인</button></div>
     <div class="codebox">
       <span class="lbl">방 코드</span><span class="code">${v.code}</span>
       <div class="invite"><label class="sr" for="linkIn">초대 링크</label><input class="input" id="linkIn" readonly value="${esc(link)}"><button type="button" class="btn" id="copyBtn">링크 복사</button></div>
@@ -589,6 +590,7 @@ function gameHtml(v: View) {
     <span class="logo">사사끼</span>
     <div class="meta">
       ${g.multiplier > 1 ? `<span class="pill hot">×${g.multiplier}</span>` : ''}
+      <button type="button" class="btn small line jokbobtn" id="jokboBtn">족보</button>
       <button type="button" class="iconbtn" id="soundBtn" aria-pressed="${soundOn}" aria-label="${soundOn ? '소리 끄기' : '소리 켜기'}">${soundOn
         ? '<svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg>'
         : '<svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>'}</button>
@@ -615,6 +617,9 @@ function render() {
   else if (view.status === 'lobby') html = lobbyHtml(view);
   else html = gameHtml(view);
   document.body.dataset.screen = !view ? 'home' : view.status === 'lobby' ? 'lobby' : 'game';
+  // 가이드라인은 대기실에서만, 족보는 게임 화면에서만 열려 있게 (화면이 바뀌면 닫음)
+  const gm = isGuideOpen();
+  if ((gm === 'full' && document.body.dataset.screen !== 'lobby') || (gm === 'jokbo' && document.body.dataset.screen !== 'game')) closeGuide();
   app.innerHTML = html + (toastMsg ? `<div class="toast" role="status">${esc(toastMsg)}</div>` : '');
   updateCountdown();
   flushPops();
@@ -807,6 +812,8 @@ app.addEventListener('click', (e) => {
       toast('게임에서 나왔어요. 내 자리는 AI가 이어서 해요');
     });
   }
+  else if (id === 'guideBtn') openGuide('full');
+  else if (id === 'jokboBtn') openGuide('jokbo');
   else if (id === 'shuffleBtn') socket.emit('shuffle', null, (r: any) => { if (!r?.ok && r?.reason) toast(r.reason); });
   else if (id === 'copyBtn') {
     const input = document.getElementById('linkIn') as HTMLInputElement;
@@ -819,6 +826,8 @@ app.addEventListener('click', (e) => {
     render();
   }
 });
+
+onGuideBack(() => play('sfx-25-button'));
 
 let lastGo = 'create';
 app.addEventListener('click', (e) => {
