@@ -89,7 +89,7 @@ describe('AI', () => {
     expect(kept).toBeGreaterThan(20);
   });
 
-  it('[전략] 평범한 페어면 대부분 찬다', () => {
+  it('[전략 11-12] 네 번째 카드가 남아 있어 꽂힐 수 있으면 평범한 페어도 대부분 아낀다', () => {
     let took = 0;
     for (let i = 0; i < 40; i++) {
       const extra = ['C3', 'C4', 'C6', 'S7', 'C11', 'C12', 'C13', 'S5'].slice(0, 2 + (i % 6));
@@ -97,7 +97,7 @@ describe('AI', () => {
       st = ok(st, play(0, 'S8'));
       if (aiDecide(aiView(st, 2), seededRng(i))?.type === 'chatda') took++;
     }
-    expect(took).toBeGreaterThan(28);
+    expect(took).toBeLessThan(12);
   });
 
   it('[전략] 같은 기회에는 같은 결정 (상황이 그대로면 마음이 바뀌지 않음)', () => {
@@ -148,15 +148,16 @@ describe('AI', () => {
     expect(chatdaRate(13, false)).toBeLessThan(0.1);
   });
 
-  it('[전략] 낮은 페어는 적극적으로 찬다', () => {
-    expect(chatdaRate(4, false)).toBeGreaterThan(0.55);
-    expect(chatdaRate(4, true)).toBeGreaterThan(0.85);
+  it('[전략 11-12] 낮은 페어: 네 번째 카드가 나와서 확실한 선이면 거의 항상 차고, 아니면 아낀다', () => {
+    // (4는 A와 함께면 사사끼라 아끼므로 5로 잰다)
+    expect(chatdaRate(5, true)).toBeGreaterThan(0.85);
+    expect(chatdaRate(5, false)).toBeLessThan(0.3);
   });
 
-  it('[전략] 네 번째 카드가 이미 나왔으면 높은 페어도 가끔 찬다', () => {
+  it('[전략 11-12] 네 번째 카드가 이미 나왔으면 높은 페어도 대부분 찬다 (확실한 선)', () => {
     const rate = chatdaRate(14, true);
-    expect(rate).toBeGreaterThan(0.12);
-    expect(rate).toBeLessThan(0.5);
+    expect(rate).toBeGreaterThan(0.5);
+    expect(rate).toBeLessThan(0.95);
   });
 
   describe('[팀플레이 11-10]', () => {
