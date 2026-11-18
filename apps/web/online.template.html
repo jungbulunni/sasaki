@@ -515,6 +515,36 @@ details.log:not([open]) > summary .eyebrow::after { content: " ▸"; }
   100% { --tp: 0%; --tc: #E5484D; } }
 @media (max-width: 600px) { .seat { --sb: 2.5px; } }
 @media (prefers-reduced-motion: reduce) { .stimer { animation-timing-function: steps(10, end); } }
+/* ── 주패 칸 크기 고정 · 버튼 네 개 상시 배치 (2026-11-18) ──
+   제출·통과·찼다·꽂다 버튼이 처음부터 같은 자리, 같은 크기로 있고 쓸 수 있을 때만 켜진다.
+   찼다·꽂다가 생기거나 카드 장수가 줄어도 주패 칸 크기가 변하지 않는다. (주패 높이는 fitHand 가 12장 기준으로 고정) */
+.me-head { min-height: 28px; }
+.me-head #clearBtn { flex: none; min-height: 26px; padding: 0 4px; font-size: 13px; margin-left: auto; }
+.me-head #clearBtn[hidden] { display: inline-flex; visibility: hidden; }
+.me-head .status { margin-left: auto; }
+.me-head .status:empty + #clearBtn { margin-left: auto; }
+.hand { align-content: flex-start; overflow: hidden; }
+.actions { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; gap: 8px; --slot-h: 58px; }
+.actions .btn, .actions #playBtn, .actions #passBtn { width: 100%; min-width: 0; height: var(--slot-h); min-height: 0; padding: 0 4px;
+  flex-direction: column; justify-content: center; gap: 1px; position: relative; font-size: 20px; line-height: 1.05; white-space: nowrap; }
+.actions .btn .sub { display: block; font: 800 11px/13px var(--font-body); height: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.actions .btn .sub:empty { display: none; }
+.actions .split { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; min-width: 0; }
+.actions .split .btn { font-size: 15px; padding: 0 2px; }
+.actions .split .btn .sub { display: none; }
+.actions .slot-kkot[data-act="blackPigSubmit"] .lbl { font-size: .82em; }
+.actions .slot-ring { position: absolute; top: -9px; right: -9px; line-height: 0; padding: 2px; border-radius: 50%; background: var(--mustard); }
+.actions .btn.spec:disabled { box-shadow: none; }
+.actions .btn.spec:not(:disabled) { animation: slotpop .8s ease-in-out infinite alternate; }
+@keyframes slotpop { to { transform: translateY(-2px); box-shadow: 0 6px 0 var(--ink); } }
+@media (prefers-reduced-motion: reduce) { .actions .btn.spec:not(:disabled) { animation: none; } }
+@media (max-width: 600px) {
+  .actions { gap: 6px; --slot-h: 52px; }
+  .actions .btn, .actions #playBtn, .actions #passBtn { font-size: 18px; }
+  .actions .btn .sub { font-size: 10px; }
+}
+@media (max-width: 600px) and (max-height: 760px) { .actions { --slot-h: 48px; } }
+@media (orientation: landscape) and (max-height: 520px) { .actions { --slot-h: 44px; } }
 </style>
 <div id="app"></div>
 <div id="shout" aria-live="polite"></div>

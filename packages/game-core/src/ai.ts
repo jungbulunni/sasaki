@@ -198,31 +198,111 @@ function situationRng(v: AiView, tag: string): Rng {
   return seededRng(Math.floor(stableRoll(key) * 4294967296));
 }
 
-/** 같은 편이 받아치기 좋은(가능하면 그걸로 바로 완주할) 패 고르기 */
-function bestFeed(v: AiView, mate: number, plays: Combo[]): Combo | null {
+/** 이 손으로 판 위 패 top 을 이길 수 있는 가장 약한 보통 패 (틀·마대 등 공격 카드는 빼고) */
+function lowestBeat(h: CardId[], top: Combo): Combo | null {
+  let best: Combo | null = null;
+  for (const c of enumerateCombos(h)) {
+    if (STRONG.includes(c.kind) || !canBeat(c, top)) continue;
+    if (!best || c.top < best.top) best = c;
+  }
+  return best;
+}
+
+/** 사람은 끝까지 페어·닐리리를 들고 있는 경우가 많다 — 실제 대전에서 잰 비율만큼 그런 모양에 무게를 더 준다
+ *  (남은 2장이 페어: 무작위 약 6% → 실제 약 14%, 남은 3장: 페어+1장 18%→29%, 닐리리 3%→7%) */
+function shapeWeight(h: CardId[]): number {
+  const u = new Set(h.map(rankOf)).size;
+  if (h.length === 2) return u === 1 ? 2.3 : 1;
+  if (h.length === 3) { const r = h.map(rankOf).sort((a, b) => a - b); return u === 2 ? 1.6 : u === 3 && r[2] - r[0] === 2 ? 2.5 : 1; }
+  return 1;
+}
+
+/**
+ * 내가 c 로 선을 잡았을 때 한 바퀴 도는 동안 벌어질 일을 상상해 본다. (2026-11-18)
+ *  - 차례 순서대로: 상대는 이걸로 바로 나갈 수 있으면 나가고, 아니면 가끔 조금 더 높은 패로 덮는다
+ *  - 같은 편은 (덮인 패 위로라도) 한 번에 다 내고 나갈 수 있으면 나간다
+ * 돌려주는 값: 같은 편이 나갈 확률, 상대가 나갈 확률
+ */
+function feedOutcome(v: AiView, c: Combo, mate: number, probs: number[], worlds: CardId[][][]): { mateOut: number; oppOut: number } {
+  let mateOut = 0, oppOut = 0, total = 0;
+  worlds.forEach((w, wi) => {
+    const wt = shapeWeight(w[mate]);
+    total += wt;
+    let top = c;
+    for (let i = 1; i < 4; i++) {
+      const s = (v.seat + i) % 4;
+      if (v.counts[s] === 0) continue;
+      if (s === mate) { if (finishesOver(w[s], top)) { mateOut += wt; return; } continue; }
+      if (probs[s] >= 0.5) continue; // 같은 편일 것 같은 사람은 막지 않는다고 본다
+      if (finishesOver(w[s], top)) { oppOut += wt; return; }
+      const b = lowestBeat(w[s], top);
+      if (b && stableRoll(`fo|${wi}|${s}|${c.cards.join('')}`) < 0.6) top = b; // 상대가 덮으면 같은 편은 더 높은 패를 넘어야 함
+    }
+  });
+  return { mateOut: mateOut / total, oppOut: oppOut / total };
+}
+
+/** 같은 편이 받아치기 좋은(가능하면 그걸로 바로 완주할) 패 고르기
+ *  1장 남음 → 낮은 싱글, 2장 남음 → 페어일 확률을 따져 낮은 페어, 3장 남음 → 닐리리일 확률을 따져 낮은 닐리리.
+ *  사이에 앉은 상대가 덮거나 그걸로 먼저 나가 버릴 위험까지 계산한다. */
+function bestFeed(v: AiView, mate: number, plays: Combo[], probs: number[]): Combo | null {
   const cands = plays.filter((c) => !STRONG.includes(c.kind) && c.cards.length < v.hand.length);
   if (!cands.length) return null;
   const unseen = unseenCards(v);
   const rng = situationRng(v, 'feed');
-  const worlds = Array.from({ length: SAMPLES }, () => imagineOthers(v, unseen, rng)[mate]);
-  // 사람은 끝까지 페어·닐리리를 들고 있는 경우가 많다 — 실제 대전에서 잰 비율만큼 그런 모양에 무게를 더 준다
-  // (남은 2장이 페어: 무작위 약 6% → 실제 약 14%, 남은 3장: 페어+1장 18%→29%, 닐리리 3%→7%)
-  const weight = (h: CardId[]) => {
-    const u = new Set(h.map(rankOf)).size;
-    if (h.length === 2) return u === 1 ? 2.3 : 1;
-    if (h.length === 3) { const r = h.map(rankOf).sort((a, b) => a - b); return u === 2 ? 1.6 : u === 3 && r[2] - r[0] === 2 ? 2.5 : 1; }
-    return 1;
-  };
-  const ws = worlds.map(weight), total = ws.reduce((a, b) => a + b, 0);
+  const worlds = Array.from({ length: SAMPLES }, () => imagineOthers(v, unseen, rng));
+  const threat = pigThreat(v);
   let best: Combo | null = null, bestScore = -Infinity;
   for (const c of cands) {
-    let can = 0, out = 0;
-    worlds.forEach((h, i) => {
-      if (finishesOver(h, c)) out += ws[i];
-      if (beatLevel(rankCounts(h), c) === 1) can += ws[i];
-    });
-    const score = (out * 3 + can) / total - c.top * 0.02 - breakCost(v.hand, c, pigThreat(v)) / 30 + c.cards.length * 0.03;
-    if (can > 0 && score > bestScore) { bestScore = score; best = c; }
+    const { mateOut, oppOut } = feedOutcome(v, c, mate, probs, worlds);
+    if (mateOut < 0.05) continue;
+    const score = mateOut - oppOut * 2 - c.top * 0.01 - breakCost(v.hand, c, threat) / 40 + c.cards.length * 0.02;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return bestScore > 0.03 ? best : null;
+}
+
+/**
+ * 상대만 남은 막판(1대1 등)에서 상대가 1장 남았고 내가 선이면: 상대가 그 한 장으로 받아서 나가 버리지 못할 패로 시작한다. (2026-11-18)
+ *  - 싱글 말고 페어·닐리리 같은 조합으로, 싱글밖에 없으면 높은 숫자부터
+ *  - 똑같이 안전하면 낮은 카드부터 털어서, 높은 카드는 결정적인 순간을 위해 남겨 둔다
+ *  (상대가 받아친 뒤 남은 패로 바로 나갈 수 있는지까지 따지는 계산은 2~3장 남은 상대에도 쓸 수 있게 만들어 둠)
+ */
+function safeLead(v: AiView, plays: Combo[], probs: number[]): Combo | null {
+  const foes = [0, 1, 2, 3].filter((s) => s !== v.seat && v.counts[s] > 0 && v.counts[s] === 1 && probs[s] < 0.5);
+  if (!foes.length || !plays.length) return null;
+  // 같은 편이 아직 남아 있으면 같은 편이 받아 줄 수 있으므로, 상대만 남은 막판(1대1 등)에서만 쓴다
+  // (시뮬레이션: 같은 편이 남아 있을 때나 2장 남은 상대에게까지 쓰면 오히려 손해)
+  if ([0, 1, 2, 3].some((s) => s !== v.seat && v.counts[s] > 0 && !foes.includes(s))) return null;
+  const unseen = unseenCards(v);
+  const rng = situationRng(v, 'safe');
+  const worlds = Array.from({ length: SAMPLES }, () => imagineOthers(v, unseen, rng));
+  const threat = pigThreat(v);
+  let best: Combo | null = null, bestScore = -Infinity;
+  for (const c of plays) {
+    let risk = 0;
+    for (const w of worlds) {
+      let worst = 0;
+      for (const s of foes) {
+        const h = w[s];
+        let r = 0;
+        if (finishesOver(h, c)) r = 1;
+        else {
+          const b = lowestBeat(h, c);
+          if (b) {
+            const rest = h.filter((x) => !b.cards.includes(x));
+            const k = rest.length ? classifyCombo(rest) : null;
+            r = !rest.length || (k && !NO_FINISH_KINDS.includes(k.kind)) ? 0.8 : 0.25;
+          }
+        }
+        worst = Math.max(worst, r);
+      }
+      risk += worst;
+    }
+    risk /= worlds.length;
+    const strong = STRONG.includes(c.kind) ? 0.4 : 0;
+    const score = -risk * 3 - strong - breakCost(v.hand, c, threat) / 60 - c.top * 0.02 + c.cards.length * 0.04;
+    if (score > bestScore) { bestScore = score; best = c; }
   }
   return best;
 }
@@ -423,11 +503,12 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
 
   if (top) {
     const by = top.seat;
-    // ① 같은 편이 낸 패 위에는 공격 카드(틀·사사끼·마대·불돼지)를 쓰지 않는다 — 같은 편의 공격을 낭비하는 셈.
-    //    같은 편 패 위에 보통 패를 덮는 건 오히려 상대가 받기 어렵게 막아 주는 효과가 있어서 그대로 둔다
-    //    (시뮬레이션으로 확인: 같은 편 위를 무조건 통과하면 팀 성적이 떨어짐).
     const byLikelyMate = probs[by] >= 0.99 || (probs[by] >= 0.5 && stableRoll(`m|${situation}`) < probs[by]);
-    if (byLikelyMate && v.counts[by] > 0 && !danger) {
+    if (byLikelyMate && v.counts[by] > 0) {
+      // ① 같은 편이 낸 패 위에는 공격 카드(틀·사사끼·마대·불돼지)를 절대 쓰지 않는다 — 상대가 곧 나갈 것 같아도. (2026-11-18 강화)
+      //    같은 편이 A 페어 같은 결정적인 패로 선을 잡으려는데 333 같은 틀로 덮어 버리면 같은 편의 한 방을 날리는 셈.
+      //    같은 편 패 위에 보통 패를 덮는 건 오히려 상대가 받기 어렵게 막아 주는 효과가 있어서 그대로 둔다
+      //    (시뮬레이션으로 확인: 같은 편 위를 무조건 통과하거나, 버틸 것 같은 패 위를 통과하면 팀 성적이 떨어짐).
       const normal = plays.filter((c) => !STRONG.includes(c.kind));
       if (!normal.length) return { type: 'pass', seat };
       plays.splice(0, plays.length, ...normal);
@@ -438,27 +519,25 @@ export function aiDecide(v: AiView, rng: Rng): HandAction | null {
   const fin = endgamePick(v, plays, probs);
   if (fin) return { type: 'play', seat, cards: fin.cards };
 
-  // ⑤ 내가 선이고 상대 중 누가 1장만 남았으면, 한 장으로는 받을 수 없는 페어·닐리리 등으로 시작한다
-  //    (2장 남은 상대에게 싱글로 시작하는 것도 시험했지만 오히려 손해라 넣지 않음)
+  // ④ 내가 선이고 같은 편이 3장 이하 남았으면, 같은 편 주패를 상상해 보고 받아서 바로 나가기 좋은 패를 내 준다
+  //    (1장 → 낮은 싱글, 2장 → 페어일 확률을 따져 낮은 페어, 3장 → 닐리리일 확률을 따져 낮은 닐리리)
+  //    사이에 앉은 상대가 덮거나 먼저 나가 버릴 위험도 함께 계산한다
+  if (!top && mateLive && v.counts[mate!] <= 3) {
+    const feed = bestFeed(v, mate!, plays, probs);
+    if (feed) return { type: 'play', seat, cards: feed.cards };
+  }
+
+  // ⑤ 내가 선이고 상대가 곧 나갈 것 같으면, 상대가 받아서 나가지 못할 패로 시작한다
+  //    (1장 남은 상대 → 조합으로, 싱글뿐이면 높은 숫자부터. 똑같이 안전하면 낮은 카드부터 털어 둔다)
   if (!top) {
-    const oppWith = (n: number) => [0, 1, 2, 3].some((s2) => s2 !== seat && v.counts[s2] === n && probs[s2] < 0.5);
-    if (oppWith(1)) {
+    const safe = safeLead(v, plays, probs);
+    if (safe) return { type: 'play', seat, cards: safe.cards };
+    // 같은 편이 아직 남아 있을 때 상대가 1장 남았으면: 한 장으로는 받을 수 없는 낮은 페어·닐리리 등으로 시작
+    //  (2장 남은 상대에게 싱글로 시작하는 것도 시험했지만 오히려 손해라 넣지 않음)
+    if ([0, 1, 2, 3].some((s2) => s2 !== seat && v.counts[s2] === 1 && probs[s2] < 0.5)) {
       const multi = plays.filter((c) => c.cards.length >= 2 && !STRONG.includes(c.kind)).sort((a, b) => a.top - b.top || b.cards.length - a.cards.length);
       if (multi.length) return { type: 'play', seat, cards: multi[0].cards };
     }
-  }
-
-  // ④ 내가 선이고 같은 편이 3장 이하 남았으면, 같은 편 주패를 상상해 보고 받기 좋은 패를 내 준다
-  //    (예: 2장 남음 → 페어일 확률이 높으니 낮은 페어, 3장 남음 → 닐리리일 것 같으면 낮은 닐리리)
-  if (!top && mateLive && v.counts[mate!] <= 3 && !danger) {
-    const feed = bestFeed(v, mate!, plays);
-    if (feed) return { type: 'play', seat, cards: feed.cards };
-  }
-  if (!top && mateNearOut && !danger) {
-    const singles = plays.filter((c) => c.kind === 'single').sort((a, b) => a.top - b.top);
-    const pairs = plays.filter((c) => c.kind === 'pair').sort((a, b) => a.top - b.top);
-    const feed = v.counts[mate!] === 2 && pairs.length && pairs[0].top <= 9 ? pairs[0] : singles[0];
-    if (feed) return { type: 'play', seat, cards: feed.cards };
   }
 
   // 상대가 같은 편을 막고 있고 같은 편이 곧 나갈 것 같으면, 선을 되찾으려고 강한 패도 쓴다

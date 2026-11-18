@@ -497,31 +497,82 @@ function statusOf(v: View): { text: string; canPlay: boolean; warn?: boolean } {
   return { text: `${name} · 낼 수 있음`, canPlay: true };
 }
 
+/**
+ * 내 주패 칸 (2026-11-18): 어떤 상황에서도 크기가 변하지 않게.
+ *  - 버튼 네 개(제출·통과·찼다·꽂다)가 처음부터 같은 자리에 같은 크기로 있고, 쓸 수 있을 때만 켜진다
+ *  - 꽂다 창에서는 '통과' 자리가 '안 꽂아', 흑돼지 창에서는 '꽂다' 자리가 '흑돼지'로 바뀐다
+ *  - 어떤 카드로 차고 꽂는지는 버튼 안 작은 글씨로
+ *  - 주패 칸 높이는 12장일 때 기준으로 고정 (카드가 줄어도 칸이 줄지 않음, fitHand)
+ */
 function handHtml(v: View) {
   const g = v.game!;
   const m = v.mine!;
   const st = statusOf(v);
-  const btns: string[] = [];
-  // 특수 행동 버튼은 모두 여기(주패 아래 같은 자리)
-  if (m.window?.type === 'kkotda') btns.push(`<span class="timed">${ring(g.deadline, 'sm')}<button type="button" class="btn spec big" data-act="kkotda">꽂다 ${m.window.cards.map(label).join(' ')}</button><button type="button" class="btn" data-act="kkotdaPass">안 꽂아</button></span>`);
-  if (m.window?.type === 'blackpig') btns.push(`<span class="timed">${ring(g.deadline, 'sm')}<button type="button" class="btn spec big" data-act="blackPigSubmit">흑돼지 ♠10 ♣10</button><button type="button" class="btn" data-act="blackPigPass">통과</button></span>`);
-  for (const o of m.options) btns.push(`<button type="button" class="btn spec" data-act="${o.type}" data-cards="${o.cards.join(',')}">${o.type === 'chatda' ? '찼다' : '차기'} ${o.cards.map(label).join(' ')}</button>`);
+  const win = m.window;
+  const sub = (cards: CardId[]) => `<small class="sub">${cards.map(label).join(' ')}</small>`;
+  const slot = (cls: string, act: string | null, main: string, cards: CardId[] | null, on: boolean, extra = '') =>
+    `<button type="button" class="btn ${cls}"${act ? ` data-act="${act}"` : ''}${on ? '' : ' disabled'}${extra}><span class="lbl">${main}</span>${cards ? sub(cards) : '<small class="sub"></small>'}</button>`;
+
+  // 통과 자리
+  const passSlot = win?.type === 'kkotda'
+    ? slot('slot-pass', 'kkotdaPass', '안 꽂아', null, true)
+    : win?.type === 'blackpig'
+      ? slot('slot-pass', 'blackPigPass', '통과', null, true)
+      : `<button type="button" class="btn slot-pass" id="passBtn" ${m.myTurn && g.trick.length ? '' : 'disabled'}><span class="lbl">통과</span><small class="sub"></small></button>`;
+
+  // 찼다 자리 (찼다와 차기가 동시에 되면 칸을 반으로 나눠 둘 다)
+  const ch = m.options.find((o) => o.type === 'chatda');
+  const mu = m.options.find((o) => o.type === 'mureugi');
+  const chatSlot = ch && mu
+    ? `<span class="slot-chat split">${slot('spec', 'chatda', '찼다', ch.cards, true, ` data-cards="${ch.cards.join(',')}"`)}${slot('spec', 'mureugi', '차기', mu.cards, true, ` data-cards="${mu.cards.join(',')}"`)}</span>`
+    : (() => { const o = ch ?? mu; return slot('spec slot-chat', o ? o.type : null, o?.type === 'mureugi' ? '차기' : '찼다', o ? o.cards : null, !!o, o ? ` data-cards="${o.cards.join(',')}"` : ''); })();
+
+  // 꽂다 자리 (흑돼지 창에서는 흑돼지)
+  const timer = win ? `<span class="slot-ring">${ring(g.deadline, 'sm')}</span>` : '';
+  const kkotSlot = win?.type === 'blackpig'
+    ? slot('spec slot-kkot', 'blackPigSubmit', '흑돼지', ['S10', 'C10'], true).replace('</button>', `${timer}</button>`)
+    : slot('spec slot-kkot', win?.type === 'kkotda' ? 'kkotda' : null, '꽂다', win?.type === 'kkotda' ? win.cards : null, win?.type === 'kkotda').replace('</button>', `${timer}</button>`);
+
   const nopass = m.noPlay ? `<div class="nopass" role="status">${clockSvg(g.deadline)}<span class="nopass-text"><b>낼 수 있는 패가 없습니다</b></span></div>` : '';
   return `<section class="me" aria-label="내 주패">
     <div class="me-head">
       <span class="me-name">${esc(nm(v.me))}의 주패 <small>${m.hand.length}장</small>${m.myTurn && !m.noPlay ? ring(g.deadline, 'sm') : ''}</span>
       <span class="status${st.canPlay ? ' good' : ''}${st.warn ? ' none' : ''}">${esc(st.text)}</span>
+      <button type="button" class="btn ghost" id="clearBtn"${selected.size ? '' : ' hidden'}>선택 해제</button>
     </div>
     ${nopass}
     <div class="hand">${m.hand.map((c) => cardHtml(c, { sel: selected.has(c), button: true })).join('') || '<p class="pile-note">카드를 모두 냈어요</p>'}</div>
     <div class="actions">
-      <button type="button" class="btn primary" id="playBtn" ${st.canPlay ? '' : 'disabled'}>제출</button>
-      <button type="button" class="btn" id="passBtn" ${m.myTurn && g.trick.length ? '' : 'disabled'}>통과</button>
-      ${btns.join('')}
-      ${selected.size ? '<button type="button" class="btn ghost" id="clearBtn">선택 해제</button>' : ''}
+      <button type="button" class="btn primary slot-play" id="playBtn" ${st.canPlay && !win ? '' : 'disabled'}><span class="lbl">제출</span><small class="sub"></small></button>
+      ${passSlot}
+      ${chatSlot}
+      ${kkotSlot}
     </div>
   </section>`;
 }
+
+/** 주패 칸 높이를 '12장을 늘어놓을 때' 기준으로 고정 — 카드 장수가 바뀌어도 칸 크기가 변하지 않게 */
+function fitHand() {
+  // 시계 그림의 바늘도 class="hand"라서, 주패 칸 바로 아래 칸만 고른다
+  const hand = document.querySelector<HTMLElement>('.me > .hand');
+  if (!hand) return;
+  const card = hand.querySelector<HTMLElement>('.card');
+  const cs = getComputedStyle(hand);
+  let w = card?.offsetWidth ?? 0, h = card?.offsetHeight ?? 0;
+  if (!card) { // 카드를 다 냈으면 마지막으로 잰 크기 사용
+    ({ w, h } = lastCard);
+    if (!w) return;
+  }
+  lastCard = { w, h };
+  const gap = parseFloat(cs.columnGap) || 0;
+  const inner = hand.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const perRow = Math.max(1, Math.floor((inner + gap) / (w + gap)));
+  const rows = Math.ceil(12 / perRow);
+  const rowGap = parseFloat(cs.rowGap) || 0;
+  hand.style.height = `${parseFloat(cs.paddingTop) + rows * h + (rows - 1) * rowGap + 4}px`;
+}
+let lastCard = { w: 0, h: 0 };
+window.addEventListener('resize', () => fitHand());
 
 function clockSvg(d: DeadlineV | null) {
   const el = d ? Math.max(0, Math.min(d.total, d.total - (d.at - now()))) : 0;
@@ -621,6 +672,7 @@ function render() {
   const gm = isGuideOpen();
   if ((gm === 'full' && document.body.dataset.screen !== 'lobby') || (gm === 'jokbo' && document.body.dataset.screen !== 'game')) closeGuide();
   app.innerHTML = html + (toastMsg ? `<div class="toast" role="status">${esc(toastMsg)}</div>` : '');
+  fitHand();
   updateCountdown();
   flushPops();
   flushFlights();
